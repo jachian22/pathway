@@ -1,6 +1,226 @@
 @import "tailwindcss";
 
 @theme {
+  /* Typography */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-serif: var(--font-playfair), Georgia, "Times New Roman", serif;
+
+  /* Primary Colors */
+  --color-cream: #F5F2ED;
+  --color-charcoal: #2D2D2D;
+  --color-forest: #2B4D3B;
+  --color-white: #FFFFFF;
+
+  /* Secondary Colors (Illustration Accents) */
+  --color-terracotta: #C65D3B;
+  --color-navy: #1E3A5F;
+  --color-brown: #8B6914;
+  --color-sky: #87CEEB;
+
+  /* Semantic Colors */
+  --color-success: #2B4D3B;
+  --color-warning: #C65D3B;
+  --color-error: #B91C1C;
+
+  /* Color shades for hover/active states */
+  --color-charcoal-light: #404040;
+  --color-charcoal-dark: #1A1A1A;
+  --color-forest-light: #3D6B52;
+  --color-forest-dark: #1E3629;
+  --color-cream-dark: #EBE8E2;
+
+  /* ======================
+     CHAT UI COLORS
+     ====================== */
+
+  /* Surface layers (light to dark) */
+  --color-surface-0: #FFFFFF;        /* Cards, chat container, input bg */
+  --color-surface-1: #FAFAF8;        /* AI message bubbles */
+  --color-surface-2: #F5F2ED;        /* Page bg (cream) */
+  --color-surface-3: #EBE8E2;        /* Hover states, dividers */
+
+  /* Message bubbles */
+  --color-msg-user: #2B4D3B;         /* User bubble bg (forest) */
+  --color-msg-user-text: #FFFFFF;    /* User bubble text */
+  --color-msg-ai: #FAFAF8;           /* AI bubble bg (surface-1) */
+  --color-msg-ai-text: #2D2D2D;      /* AI bubble text (charcoal) */
+
+  /* Text hierarchy */
+  --color-text-primary: #2D2D2D;     /* Main text */
+  --color-text-secondary: #6B6B6B;   /* Timestamps, metadata */
+  --color-text-muted: #9B9B9B;       /* Placeholders, hints */
+  --color-text-inverse: #FFFFFF;     /* Text on dark backgrounds */
+
+  /* Interactive states */
+  --color-focus: #2B4D3B;            /* Focus rings (forest) */
+  --color-focus-ring: rgba(43, 77, 59, 0.3);  /* Subtle focus glow */
+
+  /* Code blocks */
+  --color-code-bg: #F4F4F4;          /* Code block background */
+  --color-code-text: #2D2D2D;        /* Code text */
+  --color-code-border: #E5E5E5;      /* Code block border */
+}
+
+/* Base styles */
+@layer base {
+  body {
+    @apply bg-cream text-charcoal font-sans antialiased;
+  }
+
+  h1, h2, h3 {
+    @apply font-serif;
+  }
+}
+
+/* Component classes */
+@layer components {
+  /* Primary button - pill shaped */
+  .btn-primary {
+    @apply bg-charcoal text-white rounded-full px-8 py-3 font-medium
+           hover:bg-charcoal-light transition-colors duration-200;
+  }
+
+  /* Secondary button - outline */
+  .btn-secondary {
+    @apply bg-transparent text-charcoal border border-charcoal rounded-full px-8 py-3 font-medium
+           hover:bg-charcoal hover:text-white transition-colors duration-200;
+  }
+
+  /* Card with optional left accent */
+  .card {
+    @apply bg-white rounded-lg shadow-sm p-6;
+  }
+
+  .card-accent {
+    @apply bg-white rounded-lg shadow-sm p-6 border-l-4 border-forest;
+  }
+
+  /* Status badges */
+  .badge-resolved {
+    @apply bg-forest/10 text-forest px-3 py-1 rounded-full text-sm font-medium;
+  }
+
+  .badge-in-progress {
+    @apply bg-terracotta/10 text-terracotta px-3 py-1 rounded-full text-sm font-medium;
+  }
+
+  .badge-escalated {
+    @apply bg-error/10 text-error px-3 py-1 rounded-full text-sm font-medium;
+  }
+
+  /* Hero headline style */
+  .hero-headline {
+    @apply font-serif italic text-4xl sm:text-5xl lg:text-6xl leading-tight;
+  }
+
+  /* Section headline */
+  .section-headline {
+    @apply font-serif italic text-2xl sm:text-3xl;
+  }
+
+  /* Container with max-width */
+  .container-brand {
+    @apply max-w-7xl mx-auto px-4 sm:px-8;
+  }
+
+  /* ======================
+     CHAT UI COMPONENTS
+     ====================== */
+
+  /* Chat container */
+  .chat-container {
+    @apply bg-surface-0 rounded-2xl shadow-lg max-w-3xl mx-auto;
+  }
+
+  /* Message bubbles */
+  .msg-user {
+    @apply bg-msg-user text-msg-user-text rounded-2xl rounded-br-md px-4 py-3 max-w-[85%] ml-auto;
+  }
+
+  .msg-ai {
+    @apply bg-msg-ai text-msg-ai-text rounded-2xl rounded-bl-md px-4 py-3 max-w-[85%] border border-surface-3;
+  }
+
+  /* Message metadata (timestamp, etc.) */
+  .msg-meta {
+    @apply text-text-secondary text-xs mt-1;
+  }
+
+  /* Chat input area */
+  .chat-input-container {
+    @apply bg-surface-0 border-t border-surface-3 p-4;
+  }
+
+  .chat-input {
+    @apply w-full bg-surface-0 border border-surface-3 rounded-xl px-4 py-3
+           placeholder:text-text-muted
+           focus:outline-none focus:ring-2 focus:ring-focus-ring focus:border-focus
+           transition-all duration-200;
+  }
+
+  .chat-input-multiline {
+    @apply w-full bg-surface-0 border border-surface-3 rounded-xl px-4 py-3
+           placeholder:text-text-muted resize-none
+           focus:outline-none focus:ring-2 focus:ring-focus-ring focus:border-focus
+           transition-all duration-200;
+  }
+
+  /* Send button */
+  .chat-send-btn {
+    @apply bg-forest text-white rounded-full p-3
+           hover:bg-forest-light disabled:opacity-50 disabled:cursor-not-allowed
+           transition-colors duration-200;
+  }
+
+  /* Typing indicator */
+  .typing-indicator {
+    @apply flex gap-1 items-center px-4 py-3;
+  }
+
+  .typing-dot {
+    @apply w-2 h-2 bg-text-secondary rounded-full animate-pulse;
+  }
+
+  /* Code blocks in messages */
+  .msg-code {
+    @apply bg-code-bg text-code-text border border-code-border rounded-lg px-3 py-2
+           font-mono text-sm overflow-x-auto;
+  }
+
+  /* Inline code */
+  .msg-code-inline {
+    @apply bg-code-bg text-code-text px-1.5 py-0.5 rounded font-mono text-sm;
+  }
+
+  /* Suggestion chips (quick actions) */
+  .suggestion-chip {
+    @apply bg-surface-1 text-text-primary border border-surface-3 rounded-full px-4 py-2
+           hover:bg-surface-3 hover:border-forest/30
+           transition-colors duration-200 cursor-pointer text-sm;
+  }
+
+  /* Chat header */
+  .chat-header {
+    @apply bg-surface-0 border-b border-surface-3 px-4 py-3 flex items-center gap-3;
+  }
+
+  /* AI avatar */
+  .ai-avatar {
+    @apply w-8 h-8 bg-forest text-white rounded-full flex items-center justify-center
+           font-semibold text-sm;
+  }
+
+  /* Empty state */
+  .chat-empty {
+    @apply flex flex-col items-center justify-center py-16 text-center;
+  }
+
+  .chat-empty-title {
+    @apply font-serif italic text-2xl text-charcoal mb-2;
+  }
+
+  .chat-empty-subtitle {
+    @apply text-text-secondary;
+  }
 }

@@ -1,4 +1,8 @@
 import { postRouter } from "@/server/api/routers/post";
+import { aiRouter } from "@/server/api/routers/ai";
+import { weatherRouter } from "@/server/api/routers/weather";
+import { eventsRouter } from "@/server/api/routers/events";
+import { placesRouter } from "@/server/api/routers/places";
 import { createCallerFactory, createTRPCRouter } from "@/server/api/trpc";
 
 /**
@@ -8,6 +12,10 @@ import { createCallerFactory, createTRPCRouter } from "@/server/api/trpc";
  */
 export const appRouter = createTRPCRouter({
   post: postRouter,
+  ai: aiRouter,
+  weather: weatherRouter,
+  events: eventsRouter,
+  places: placesRouter,
 });
 
 // export type definition of API
