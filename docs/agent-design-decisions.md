@@ -516,6 +516,41 @@ Scope: Chat agent architecture and execution policy for Restaurant Intelligence
 - Revisit when:
   - We add explicit “competitor mode” or multi-competitor workflows.
 
+## ADR-026: Post-stabilization memory/context tactics backlog
+
+- Status: Backlog (defer until current chat reliability issues are stabilized)
+- Decision:
+  - Implement memory/context upgrades in six concrete phases after bug/stability pass:
+    1. Layered memory model:
+       - `state memory` (deterministic keys: active card, locations, baseline by location, assumption scope, competitor-used flag).
+       - `episodic memory` (compact per-turn summaries: recommendation accepted/rejected, unresolved question, notable constraints).
+       - `raw transcript` remains append-only for audit/debug only (never wholesale prompt replay).
+    2. Context assembler with fixed section budgets:
+       - Build per-turn packet in priority order: system/policy, state memory, user input, signal digest, episodic recalls.
+       - Enforce section budgets and trim lowest-priority sections first (never drop state memory).
+    3. Pre-call compaction and pruning:
+       - Estimate token load before LLM call.
+       - Compact older episodic notes into a shorter summary row when threshold exceeded.
+       - Prune bulky tool payloads to digests before prompt assembly.
+    4. Retrieval-only memory recall:
+       - For follow-ups, retrieve top-k relevant episodic entries by tags + recency (no full transcript replay).
+       - Use focused keys (`baseline`, `location`, `staffing`, `wait_time`, `competitor`, etc.).
+    5. Tolerant generation contract:
+       - Keep recommendations deterministic.
+       - Treat narrative parse failures as recoverable (salvage narrative, continue turn) instead of hard-failing turn flow.
+    6. Context observability:
+       - Emit per-section token usage and compaction metrics.
+       - Standardize root failure causes (`provider_empty`, `output_truncated`, `parse_invalid`, `repair_budget_exhausted`).
+- Why:
+  - Prevents context growth and repeated payload churn from degrading later turns.
+  - Improves continuity without transcript stuffing.
+  - Makes latency/failure regressions diagnosable with section-level telemetry.
+- Guardrails:
+  - Prioritize reliability fixes in current agent path first.
+  - Roll out behind flags and evaluate per-phase impact before enabling globally.
+- Revisit when:
+  - Current production fallback/truncation issues are below threshold for two consecutive release cycles.
+
 ## Open Questions (Next Design Session)
 
 1. Persona-specific variants after default balanced mode is stable (owner vs ops manager).

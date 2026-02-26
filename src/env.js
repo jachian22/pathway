@@ -18,22 +18,22 @@ export const env = createEnv({
     OPENROUTER_FALLBACK_MODEL: z.string().default("minimax/minimax-m2.5"),
     OPENROUTER_FAST_MODEL: z.string().optional(),
     INTELLIGENCE_AGENT_MODE: z.enum(["off", "on"]).default("off"),
-    INTELLIGENCE_TURN_BUDGET_MS: z.coerce.number().int().min(500).default(4500),
+    INTELLIGENCE_TURN_BUDGET_MS: z.coerce.number().int().min(500).default(9000),
     INTELLIGENCE_TURN_BUDGET_FIRST_MS: z.coerce
       .number()
       .int()
       .min(500)
-      .default(9000),
+      .default(15000),
     INTELLIGENCE_TURN_BUDGET_FOLLOWUP_MS: z.coerce
       .number()
       .int()
       .min(500)
-      .default(4500),
+      .default(9000),
     INTELLIGENCE_TURN_REPAIR_RESERVE_MS: z.coerce
       .number()
       .int()
       .min(0)
-      .default(1200),
+      .default(2500),
     INTELLIGENCE_AGENT_MAX_TOKENS_FIRST_TURN: z.coerce
       .number()
       .int()

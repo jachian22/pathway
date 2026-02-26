@@ -137,7 +137,8 @@ const MAX_REPAIR_TIMEOUT_MS = 1200;
 const MIN_REPAIR_BUDGET_MS = 300;
 const SIGNAL_PACK_SUMMARY_TIMEOUT_MS = 400;
 const SIGNAL_PACK_SUMMARY_MAX_TOKENS = 220;
-const LLM_TOOL_LOOP_REQUEST_TIMEOUT_MS = 3500;
+const LLM_TOOL_LOOP_REQUEST_TIMEOUT_MS = 9000;
+const MIN_LOOP_BUDGET_AFTER_SUMMARY_MS = 1800;
 
 interface SignalPackLocation {
   locationLabel: string;
@@ -617,19 +618,31 @@ export async function runAgentTurn(
   );
   let signalPackSummary = deterministicSignalPackSummary;
   const signalPackSummaryStartedAtMs = Date.now();
-  const summaryBudgetMs = Math.min(
-    SIGNAL_PACK_SUMMARY_TIMEOUT_MS,
-    Math.max(0, loopDeadlineMs - Date.now() - MIN_REPAIR_BUDGET_MS),
-  );
+  const summaryBudgetMs = isFirstTurn
+    ? Math.min(
+        SIGNAL_PACK_SUMMARY_TIMEOUT_MS,
+        Math.max(
+          0,
+          loopDeadlineMs -
+            Date.now() -
+            MIN_REPAIR_BUDGET_MS -
+            MIN_LOOP_BUDGET_AFTER_SUMMARY_MS,
+        ),
+      )
+    : 0;
   if (summaryBudgetMs >= 200) {
     try {
-      signalPackSummary = await summarizeSignalPackWithLlm({
-        cardType: input.cardType,
-        signalPack: deterministicSignalPack,
-        deterministicSummary: deterministicSignalPackSummary,
-        model: modelOverride,
-        timeoutMs: summaryBudgetMs,
-      });
+      signalPackSummary = await withLocalTimeout(
+        summarizeSignalPackWithLlm({
+          cardType: input.cardType,
+          signalPack: deterministicSignalPack,
+          deterministicSummary: deterministicSignalPackSummary,
+          model: modelOverride,
+          timeoutMs: summaryBudgetMs,
+        }),
+        summaryBudgetMs + 150,
+        "AGENT_SIGNAL_PACK_SUMMARY_TIMEOUT_LOCAL",
+      );
       phaseTelemetry.push({
         phase: "signal_pack_summary",
         status: "ok",

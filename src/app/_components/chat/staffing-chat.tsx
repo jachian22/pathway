@@ -50,42 +50,51 @@ function buildEvidenceFingerprint(input: {
   snapshots: FirstInsightOutput["snapshots"];
   competitorSnapshot: FirstInsightOutput["competitorSnapshot"];
 }): string {
-  const normalized = {
-    recommendations: input.recommendations.map((item) => ({
+  const stableRecommendations = [...input.recommendations]
+    .map((item) => ({
       locationLabel: item.locationLabel,
       action: item.action,
       timeWindow: item.timeWindow,
-      confidence: item.confidence,
       sourceName: item.sourceName,
       reviewBacked: item.reviewBacked,
-      sourceFreshnessSeconds: item.sourceFreshnessSeconds ?? null,
       evidence: item.evidence
         ? {
             evidenceCount: item.evidence.evidenceCount,
             recencyWindowDays: item.evidence.recencyWindowDays,
-            topRefs: item.evidence.topRefs.map((ref) => ({
-              placeId: ref.placeId,
-              reviewIdOrHash: ref.reviewIdOrHash,
-              publishTime: ref.publishTime,
-              theme: ref.theme,
-            })),
+            topRefs: [...item.evidence.topRefs]
+              .map((ref) => ({
+                placeId: ref.placeId,
+                reviewIdOrHash: ref.reviewIdOrHash,
+                theme: ref.theme,
+              }))
+              .sort((a, b) =>
+                `${a.placeId}:${a.reviewIdOrHash}:${a.theme}`.localeCompare(
+                  `${b.placeId}:${b.reviewIdOrHash}:${b.theme}`,
+                ),
+              ),
           }
         : null,
-    })),
-    snapshots: input.snapshots.map((snapshot) => ({
+    }))
+    .sort((a, b) =>
+      `${a.locationLabel}:${a.timeWindow}:${a.action}:${a.sourceName}`.localeCompare(
+        `${b.locationLabel}:${b.timeWindow}:${b.action}:${b.sourceName}`,
+      ),
+    );
+
+  const stableSnapshots = [...input.snapshots]
+    .map((snapshot) => ({
       locationLabel: snapshot.locationLabel,
       text: snapshot.text,
-      sampleReviewCount: snapshot.sampleReviewCount,
-      recencyWindowDays: snapshot.recencyWindowDays,
-      confidence: snapshot.confidence,
-    })),
+    }))
+    .sort((a, b) => a.locationLabel.localeCompare(b.locationLabel));
+
+  const normalized = {
+    recommendations: stableRecommendations,
+    snapshots: stableSnapshots,
     competitorSnapshot: input.competitorSnapshot
       ? {
           label: input.competitorSnapshot.label,
           text: input.competitorSnapshot.text,
-          confidence: input.competitorSnapshot.confidence,
-          sampleReviewCount: input.competitorSnapshot.sampleReviewCount,
-          recencyWindowDays: input.competitorSnapshot.recencyWindowDays,
           status: input.competitorSnapshot.status,
         }
       : null,
