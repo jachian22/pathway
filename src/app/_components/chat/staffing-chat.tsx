@@ -40,6 +40,7 @@ type ErrorBannerState = {
     withFollowup?: string;
     parsedLocationsInput?: string[];
     competitorNameInput?: string;
+    idempotencyKey?: string;
     suppressUserEcho?: boolean;
   };
 };
@@ -179,6 +180,16 @@ function extractThemeFromQuestion(
 
 function humanizeTheme(theme: string): string {
   return theme.replaceAll("_", " ");
+}
+
+function makeIdempotencyKey(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function buildEvidenceAnswer(
@@ -330,6 +341,7 @@ export function StaffingChat() {
     withFollowup?: string;
     parsedLocationsInput?: string[];
     competitorNameInput?: string;
+    idempotencyKey?: string;
     suppressUserEcho?: boolean;
   }) => {
     const withFollowup = params?.withFollowup;
@@ -561,6 +573,7 @@ export function StaffingChat() {
     const payload = {
       sessionId: nextSessionId ?? undefined,
       distinctId,
+      idempotencyKey: params?.idempotencyKey ?? makeIdempotencyKey(),
       cardType: selectedCard,
       locations: locationsForRequest,
       competitorName: competitorNameForRequest || undefined,
@@ -638,6 +651,7 @@ export function StaffingChat() {
           withFollowup,
           parsedLocationsInput: locationsForRequest,
           competitorNameInput: competitorNameForRequest,
+          idempotencyKey: payload.idempotencyKey,
           suppressUserEcho: true,
         },
       });

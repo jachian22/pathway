@@ -17,6 +17,7 @@ const baselineSchema = z.object({
 const firstInsightInputSchema = z.object({
   sessionId: z.string().uuid().optional(),
   distinctId: z.string().optional(),
+  idempotencyKey: z.string().min(8).max(128).optional(),
   cardType: cardTypeSchema,
   locations: z.array(z.string().min(1)).min(1).max(3),
   baselineContext: z.array(baselineSchema).optional(),

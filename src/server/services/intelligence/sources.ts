@@ -87,7 +87,9 @@ function makeWeatherSignal(
   };
 }
 
-async function fetchWeather(locations: ResolvedLocation[]): Promise<{
+export async function fetchWeatherSource(
+  locations: ResolvedLocation[],
+): Promise<{
   byLocation: Record<string, WeatherSignal>;
   status: SourceStatus;
 }> {
@@ -143,7 +145,9 @@ function toEventDateTime(localDate?: string, localTime?: string): Date {
   return new Date(iso);
 }
 
-async function fetchEvents(locations: ResolvedLocation[]): Promise<{
+export async function fetchEventsSource(
+  locations: ResolvedLocation[],
+): Promise<{
   byLocation: Record<string, VenueEventSignal[]>;
   status: SourceStatus;
 }> {
@@ -262,7 +266,9 @@ async function fetchEvents(locations: ResolvedLocation[]): Promise<{
   }
 }
 
-async function fetchClosures(locations: ResolvedLocation[]): Promise<{
+export async function fetchClosuresSource(
+  locations: ResolvedLocation[],
+): Promise<{
   byLocation: Record<string, ClosureSignal[]>;
   status: SourceStatus;
 }> {
@@ -321,7 +327,7 @@ async function fetchClosures(locations: ResolvedLocation[]): Promise<{
   }
 }
 
-async function fetchDoe(
+export async function fetchDoeSource(
   dbClient: DbClient,
 ): Promise<{ days: DoeSignal[]; status: SourceStatus }> {
   try {
@@ -385,7 +391,7 @@ async function fetchDoe(
   }
 }
 
-async function fetchReviews(
+export async function fetchReviewsSource(
   locations: ResolvedLocation[],
   competitorPlaceId?: string,
 ): Promise<{
@@ -468,11 +474,11 @@ export async function fetchSourceBundle(
   competitorPlaceId?: string,
 ): Promise<SourceBundle> {
   const [weather, events, closures, doe, reviews] = await Promise.all([
-    fetchWeather(locations),
-    fetchEvents(locations),
-    fetchClosures(locations),
-    fetchDoe(dbClient),
-    fetchReviews(locations, competitorPlaceId),
+    fetchWeatherSource(locations),
+    fetchEventsSource(locations),
+    fetchClosuresSource(locations),
+    fetchDoeSource(dbClient),
+    fetchReviewsSource(locations, competitorPlaceId),
   ]);
 
   return {

@@ -16,6 +16,7 @@ export const env = createEnv({
     OPENROUTER_API_KEY: z.string(),
     OPENROUTER_MODEL: z.string().default("moonshotai/kimi-k2.5"),
     OPENROUTER_FALLBACK_MODEL: z.string().default("minimax/minimax-m2.5"),
+    INTELLIGENCE_AGENT_MODE: z.enum(["off", "on"]).default("off"),
 
     // Data providers
     OPENWEATHER_API_KEY: z.string(),
@@ -49,6 +50,7 @@ export const env = createEnv({
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
     OPENROUTER_FALLBACK_MODEL: process.env.OPENROUTER_FALLBACK_MODEL,
+    INTELLIGENCE_AGENT_MODE: process.env.INTELLIGENCE_AGENT_MODE,
 
     // Data providers
     OPENWEATHER_API_KEY: process.env.OPENWEATHER_API_KEY,

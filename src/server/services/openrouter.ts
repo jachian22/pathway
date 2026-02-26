@@ -1,16 +1,46 @@
 import { env } from "@/env";
 
-interface ChatMessage {
+export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+interface ToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+type ToolMessage = {
+  role: "tool";
+  tool_call_id: string;
+  content: string;
+};
+
+type AssistantToolMessage = {
+  role: "assistant";
+  content: string | null;
+  tool_calls: ToolCall[];
+};
+
+type OpenRouterLoopMessage = ChatMessage | ToolMessage | AssistantToolMessage;
 
 interface ChatCompletionResponse {
   id: string;
   choices: {
     message: {
       role: string;
-      content: string;
+      content: string | null;
+      tool_calls?: ToolCall[];
     };
     finish_reason: string;
   }[];
@@ -42,8 +72,32 @@ interface ModelFailure {
 }
 
 interface ModelResult {
-  content?: string;
+  data?: ChatCompletionResponse;
   failure?: ModelFailure;
+}
+
+export interface ToolExecution {
+  toolName: string;
+  sourceName: string;
+  args: Record<string, unknown>;
+  status: "ok" | "error" | "timeout" | "stale";
+  latencyMs: number;
+  cacheHit?: boolean;
+  sourceFreshnessSeconds?: number;
+  errorCode?: string;
+  result: Record<string, unknown>;
+}
+
+interface ToolLoopParams {
+  messages: ChatMessage[];
+  tools: ToolDefinition[];
+  executeTool: (params: {
+    name: string;
+    args: Record<string, unknown>;
+  }) => Promise<ToolExecution>;
+  options?: ChatCompletionOptions;
+  maxRounds?: number;
+  maxToolCalls?: number;
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -99,9 +153,10 @@ function parseErrorPayload(raw: string): {
 }
 
 async function requestChatCompletion(
-  messages: ChatMessage[],
+  messages: OpenRouterLoopMessage[],
   model: string,
   options?: ChatCompletionOptions,
+  tools?: ToolDefinition[],
 ): Promise<ModelResult> {
   let response: Response;
 
@@ -119,6 +174,14 @@ async function requestChatCompletion(
         messages,
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? 1024,
+        tools: tools?.map((tool) => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+          },
+        })),
       }),
     });
   } catch (error) {
@@ -154,65 +217,38 @@ async function requestChatCompletion(
   }
 
   const data = (await response.json()) as ChatCompletionResponse;
-  const content = data.choices[0]?.message?.content;
-
-  if (!content) {
-    return {
-      failure: {
-        message: "No response content from OpenRouter",
-        retryable: false,
-      },
-    };
-  }
-
-  return { content };
+  return { data };
 }
 
-export async function chatCompletion(
-  messages: ChatMessage[],
-  options?: ChatCompletionOptions,
-): Promise<string> {
+function resolveModels(options?: ChatCompletionOptions): {
+  primaryModel: string;
+  fallbackModel?: string;
+} {
   const primaryModel = options?.model ?? env.OPENROUTER_MODEL;
   const fallbackModel =
     options?.model || env.OPENROUTER_FALLBACK_MODEL === primaryModel
       ? undefined
       : env.OPENROUTER_FALLBACK_MODEL;
 
-  const primaryResult = await requestChatCompletion(
-    messages,
-    primaryModel,
-    options,
-  );
-  if (primaryResult.content) {
-    return primaryResult.content;
-  }
+  return { primaryModel, fallbackModel };
+}
 
-  if (fallbackModel && primaryResult.failure?.retryable) {
-    const fallbackResult = await requestChatCompletion(
-      messages,
-      fallbackModel,
-      options,
-    );
-    if (fallbackResult.content) {
-      return fallbackResult.content;
-    }
-
-    const fallbackFailure = fallbackResult.failure;
-    const fallbackLabel = fallbackFailure?.status
+function throwFromFailure(
+  primaryModel: string,
+  primaryFailure: ModelFailure,
+  fallbackModel?: string,
+  fallbackFailure?: ModelFailure,
+): never {
+  if (fallbackModel && fallbackFailure) {
+    const fallbackLabel = fallbackFailure.status
       ? `${fallbackFailure.status} - ${fallbackFailure.message}`
-      : (fallbackFailure?.message ?? "unknown fallback failure");
-    const primaryLabel = primaryResult.failure?.status
-      ? `${primaryResult.failure.status} - ${primaryResult.failure.message}`
-      : (primaryResult.failure?.message ?? "unknown primary failure");
-
+      : fallbackFailure.message;
+    const primaryLabel = primaryFailure.status
+      ? `${primaryFailure.status} - ${primaryFailure.message}`
+      : primaryFailure.message;
     throw new Error(
       `OpenRouter API error. primary(${primaryModel}): ${primaryLabel}; fallback(${fallbackModel}): ${fallbackLabel}`,
     );
-  }
-
-  const primaryFailure = primaryResult.failure;
-  if (!primaryFailure) {
-    throw new Error("OpenRouter API error: unknown failure");
   }
 
   if (primaryFailure.status) {
@@ -222,4 +258,166 @@ export async function chatCompletion(
   }
 
   throw new Error(`OpenRouter API error: ${primaryFailure.message}`);
+}
+
+export async function chatCompletion(
+  messages: ChatMessage[],
+  options?: ChatCompletionOptions,
+): Promise<string> {
+  const { primaryModel, fallbackModel } = resolveModels(options);
+
+  const primaryResult = await requestChatCompletion(
+    messages,
+    primaryModel,
+    options,
+  );
+  const primaryContent = primaryResult.data?.choices[0]?.message?.content;
+  if (primaryContent) {
+    return primaryContent;
+  }
+
+  if (fallbackModel && primaryResult.failure?.retryable) {
+    const fallbackResult = await requestChatCompletion(
+      messages,
+      fallbackModel,
+      options,
+    );
+    const fallbackContent = fallbackResult.data?.choices[0]?.message?.content;
+    if (fallbackContent) {
+      return fallbackContent;
+    }
+
+    const fallbackFailure = fallbackResult.failure ?? {
+      message: "No content from fallback model",
+      retryable: false,
+    };
+    const primaryFailure = primaryResult.failure ?? {
+      message: "No content from primary model",
+      retryable: false,
+    };
+    throwFromFailure(
+      primaryModel,
+      primaryFailure,
+      fallbackModel,
+      fallbackFailure,
+    );
+  }
+
+  const primaryFailure = primaryResult.failure ?? {
+    message: "No response content from OpenRouter",
+    retryable: false,
+  };
+  throwFromFailure(primaryModel, primaryFailure);
+}
+
+export async function chatCompletionWithTools(
+  params: ToolLoopParams,
+): Promise<{ content: string; toolExecutions: ToolExecution[] }> {
+  const maxRounds = params.maxRounds ?? 2;
+  const maxToolCalls = params.maxToolCalls ?? 8;
+  const { primaryModel, fallbackModel } = resolveModels(params.options);
+  const toolMap = new Map(params.tools.map((tool) => [tool.name, tool]));
+
+  const toolExecutions: ToolExecution[] = [];
+  const messages: OpenRouterLoopMessage[] = [...params.messages];
+  let currentModel = primaryModel;
+  let retriedWithFallback = false;
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    const result = await requestChatCompletion(
+      messages,
+      currentModel,
+      params.options,
+      params.tools,
+    );
+
+    if (result.failure) {
+      if (
+        !retriedWithFallback &&
+        fallbackModel &&
+        result.failure.retryable &&
+        currentModel !== fallbackModel
+      ) {
+        currentModel = fallbackModel;
+        retriedWithFallback = true;
+        continue;
+      }
+
+      throwFromFailure(currentModel, result.failure);
+    }
+
+    const message = result.data?.choices[0]?.message;
+    if (!message) {
+      throw new Error("OpenRouter API error: missing response message");
+    }
+
+    const toolCalls = message.tool_calls ?? [];
+    if (toolCalls.length === 0) {
+      if (!message.content) {
+        throw new Error("OpenRouter API error: missing final content");
+      }
+      return {
+        content: message.content,
+        toolExecutions,
+      };
+    }
+
+    messages.push({
+      role: "assistant",
+      content: message.content,
+      tool_calls: toolCalls,
+    });
+
+    for (const call of toolCalls) {
+      if (toolExecutions.length >= maxToolCalls) {
+        throw new Error("AGENT_TOOL_CALL_LIMIT_REACHED");
+      }
+
+      const tool = toolMap.get(call.function.name);
+      if (!tool) {
+        const unknownResult = {
+          error: `Unknown tool: ${call.function.name}`,
+        };
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify(unknownResult),
+        });
+        toolExecutions.push({
+          toolName: call.function.name,
+          sourceName: "system",
+          args: {},
+          status: "error",
+          latencyMs: 0,
+          errorCode: "UNKNOWN_TOOL",
+          result: unknownResult,
+        });
+        continue;
+      }
+
+      let args: Record<string, unknown> = {};
+      try {
+        const parsed = JSON.parse(call.function.arguments) as Record<
+          string,
+          unknown
+        > | null;
+        args = parsed ?? {};
+      } catch {
+        args = {};
+      }
+
+      const execution = await params.executeTool({
+        name: tool.name,
+        args,
+      });
+      toolExecutions.push(execution);
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: JSON.stringify(execution.result),
+      });
+    }
+  }
+
+  throw new Error("AGENT_TOOL_ROUND_LIMIT_REACHED");
 }

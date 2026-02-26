@@ -1,5 +1,6 @@
 import { and, count, desc, eq, sql } from "drizzle-orm";
 
+import { env } from "@/env";
 import type { DbClient } from "@/server/db";
 import {
   chatCompetitorChecks,
@@ -14,6 +15,9 @@ import {
 } from "@/server/db/schema";
 import { emitEvent } from "@/server/observability/emit";
 import { searchPlaces } from "@/server/services/google-places";
+import { runAgentTurn } from "@/server/services/intelligence/agent/controller";
+import { runIdempotent } from "@/server/services/intelligence/agent/idempotency";
+import { withSessionLock } from "@/server/services/intelligence/agent/lock";
 import {
   MODEL_ID,
   PROMPT_VERSION,
@@ -37,6 +41,7 @@ interface BaselineContextInput {
 export interface FirstInsightInput {
   sessionId?: string;
   distinctId?: string;
+  idempotencyKey?: string;
   cardType: CardType;
   locations: string[];
   baselineContext?: BaselineContextInput[];
@@ -733,12 +738,13 @@ async function syncBaselineMemory(
   }
 }
 
-export async function runFirstInsight(
+async function runFirstInsightUnlocked(
   ctx: IntelligenceContext,
-  input: FirstInsightInput,
+  input: FirstInsightInput & { sessionId: string },
+  params: { startedMs: number },
 ): Promise<FirstInsightOutput> {
-  const startedMs = nowMs();
-  const sessionId = await getOrCreateSession(ctx, input);
+  const startedMs = params.startedMs;
+  const sessionId = input.sessionId;
   const turnIndex = await getNextTurnIndex(ctx.db, sessionId);
 
   const parsedLocations = await resolveLocations(input.locations);
@@ -919,24 +925,185 @@ export async function runFirstInsight(
     );
   }
 
-  const sourceBundle = await fetchSourceBundle(
-    ctx.db,
-    resolvedLocations,
-    competitor.placeId,
-  );
+  const useAgentMode = env.INTELLIGENCE_AGENT_MODE === "on";
 
-  const recommendationInputs = resolvedLocations.map((location, idx) => ({
-    locationLabel: location.label,
-    weather: sourceBundle.weather.byLocation[location.label],
-    events: sourceBundle.events.byLocation[location.label],
-    closures: sourceBundle.closures.byLocation[location.label],
-    review: sourceBundle.reviews.byLocation[location.label],
-    baselineFoh: baselineByLocation.get(location.label),
-    baselineAssumed: !baselineByLocation.has(location.label) && idx === 0,
-  }));
+  let recommendationOutput: {
+    summary: string;
+    recommendations: Recommendation[];
+    snapshots: FirstInsightOutput["snapshots"];
+  };
+  let competitorSnapshotForUi: FirstInsightOutput["competitorSnapshot"];
+  let messageText: string;
+  let sourceEntries: Array<
+    [
+      "weather" | "events" | "closures" | "doe" | "reviews",
+      {
+        status: "ok" | "error" | "stale" | "timeout";
+        freshnessSeconds?: number;
+        cacheHit?: boolean;
+        errorCode?: string;
+      },
+    ]
+  >;
+  let reviewByLocationForPersistence: Record<
+    string,
+    {
+      sampleReviewCount: number;
+      evidenceCount: number;
+      recencyWindowDays: number;
+      themes: Record<string, number>;
+    }
+  > = {};
+  let competitorReviewForPersistence: {
+    placeId: string;
+    sampleReviewCount: number;
+    evidenceCount: number;
+    recencyWindowDays: number;
+    themes: Record<string, number>;
+  } | null = null;
+  let toolExecutions: Array<{
+    toolName: string;
+    sourceName: string;
+    status: "ok" | "error" | "stale" | "timeout";
+    latencyMs: number;
+    cacheHit?: boolean;
+    sourceFreshnessSeconds?: number;
+    errorCode?: string;
+    result: Record<string, unknown>;
+  }> = [];
+  if (useAgentMode) {
+    const agentOutput = await runAgentTurn({
+      db: ctx.db,
+      sessionId,
+      turnIndex,
+      cardType: input.cardType,
+      resolvedLocations,
+      baselineByLocation,
+      baselineAssumedForFirstLocation: !baselineByLocation.has(
+        resolvedLocations[0]?.label ?? "",
+      ),
+      competitor,
+      competitorName: input.competitorName,
+    });
 
-  const competitorSnapshotForUi: FirstInsightOutput["competitorSnapshot"] =
-    (() => {
+    recommendationOutput = {
+      summary: agentOutput.summary,
+      recommendations: agentOutput.recommendations,
+      snapshots: agentOutput.snapshots,
+    };
+    competitorSnapshotForUi = agentOutput.competitorSnapshot;
+    messageText = agentOutput.message;
+    sourceEntries = [
+      ["weather", agentOutput.sources.weather],
+      ["events", agentOutput.sources.events],
+      ["closures", agentOutput.sources.closures],
+      ["doe", agentOutput.sources.doe],
+      ["reviews", agentOutput.sources.reviews],
+    ];
+    reviewByLocationForPersistence = Object.fromEntries(
+      Object.entries(agentOutput.reviewSignals.byLocation).map(
+        ([label, signal]) => [
+          label,
+          {
+            sampleReviewCount: signal.sampleReviewCount,
+            evidenceCount: signal.evidenceCount,
+            recencyWindowDays: signal.recencyWindowDays,
+            themes: signal.themes,
+          },
+        ],
+      ),
+    );
+    competitorReviewForPersistence = agentOutput.reviewSignals.competitorReview
+      ? {
+          placeId: agentOutput.reviewSignals.competitorReview.placeId,
+          sampleReviewCount:
+            agentOutput.reviewSignals.competitorReview.sampleReviewCount,
+          evidenceCount:
+            agentOutput.reviewSignals.competitorReview.evidenceCount,
+          recencyWindowDays:
+            agentOutput.reviewSignals.competitorReview.recencyWindowDays,
+          themes: agentOutput.reviewSignals.competitorReview.themes,
+        }
+      : null;
+    toolExecutions = agentOutput.toolExecutions;
+
+    await safeSideEffect(
+      ctx,
+      {
+        sessionId,
+        turnIndex,
+        operation: "emit_agent_metadata",
+      },
+      async () => {
+        await emitEvent(
+          {
+            event: "agent_response_validated",
+            trace_id: ctx.traceId,
+            request_id: ctx.requestId,
+            session_id: sessionId,
+            turn_index: turnIndex,
+            route: "intelligence.firstInsight",
+            env: process.env.NODE_ENV,
+          },
+          {
+            agent_mode: env.INTELLIGENCE_AGENT_MODE,
+            prompt_version: agentOutput.promptMeta.promptVersion,
+            tool_contract_version: agentOutput.promptMeta.toolContractVersion,
+            policy_version: agentOutput.promptMeta.policyVersion,
+            policy_caps_applied: agentOutput.policyCapsApplied,
+            tool_call_count: toolExecutions.length,
+            assumptions_count: agentOutput.assumptions.length,
+          },
+        );
+      },
+    );
+
+    await safeSideEffect(
+      ctx,
+      {
+        sessionId,
+        turnIndex,
+        operation: "emit_agent_circuit_breakers",
+      },
+      async () => {
+        for (const event of agentOutput.circuitBreakerEvents) {
+          await emitEvent(
+            {
+              event: "agent_circuit_breaker_opened",
+              trace_id: ctx.traceId,
+              request_id: ctx.requestId,
+              session_id: sessionId,
+              turn_index: turnIndex,
+              route: "intelligence.firstInsight",
+              env: process.env.NODE_ENV,
+            },
+            {
+              source_name: event.sourceName,
+              failure_count: event.failureCount,
+            },
+            { level: "warn" },
+          );
+        }
+      },
+    );
+  } else {
+    const sourceBundle = await fetchSourceBundle(
+      ctx.db,
+      resolvedLocations,
+      competitor.placeId,
+    );
+
+    const recommendationInputs = resolvedLocations.map((location, idx) => ({
+      locationLabel: location.label,
+      weather: sourceBundle.weather.byLocation[location.label],
+      events: sourceBundle.events.byLocation[location.label],
+      closures: sourceBundle.closures.byLocation[location.label],
+      review: sourceBundle.reviews.byLocation[location.label],
+      baselineFoh: baselineByLocation.get(location.label),
+      baselineAssumed: !baselineByLocation.has(location.label) && idx === 0,
+    }));
+
+    competitorSnapshotForUi = (() => {
       if (competitor.status === "not_requested") {
         return undefined;
       }
@@ -986,24 +1153,43 @@ export async function runFirstInsight(
       };
     })();
 
-  const competitorSummaryLine = competitorSnapshotForUi
-    ? `Competitor check: ${competitorSnapshotForUi.label}. ${competitorSnapshotForUi.text}`
-    : undefined;
+    const competitorSummaryLine = competitorSnapshotForUi
+      ? `Competitor check: ${competitorSnapshotForUi.label}. ${competitorSnapshotForUi.text}`
+      : undefined;
 
-  const recommendationOutput = buildRecommendations(
-    input.cardType,
-    recommendationInputs,
-    {
-      doeDays: sourceBundle.doe.days,
-      competitorSnapshot: competitorSummaryLine,
-    },
-  );
+    recommendationOutput = buildRecommendations(
+      input.cardType,
+      recommendationInputs,
+      {
+        doeDays: sourceBundle.doe.days,
+        competitorSnapshot: competitorSummaryLine,
+      },
+    );
 
-  const messageText = buildMessage({
-    summary: recommendationOutput.summary,
-    recommendations: recommendationOutput.recommendations,
-    competitorSnapshot: competitorSnapshotForUi,
-  });
+    messageText = buildMessage({
+      summary: recommendationOutput.summary,
+      recommendations: recommendationOutput.recommendations,
+      competitorSnapshot: competitorSnapshotForUi,
+    });
+
+    sourceEntries = [
+      ["weather", sourceBundle.weather.status],
+      ["events", sourceBundle.events.status],
+      ["closures", sourceBundle.closures.status],
+      ["doe", sourceBundle.doe.status],
+      ["reviews", sourceBundle.reviews.status],
+    ];
+    reviewByLocationForPersistence = sourceBundle.reviews.byLocation;
+    competitorReviewForPersistence = sourceBundle.competitorReview
+      ? {
+          placeId: sourceBundle.competitorReview.placeId,
+          sampleReviewCount: sourceBundle.competitorReview.sampleReviewCount,
+          evidenceCount: sourceBundle.competitorReview.evidenceCount,
+          recencyWindowDays: sourceBundle.competitorReview.recencyWindowDays,
+          themes: sourceBundle.competitorReview.themes,
+        }
+      : null;
+  }
 
   const assistantMessageId = await insertMessage(
     ctx.db,
@@ -1013,14 +1199,6 @@ export async function runFirstInsight(
     messageText,
   );
 
-  const sourceEntries = [
-    ["weather", sourceBundle.weather.status],
-    ["events", sourceBundle.events.status],
-    ["closures", sourceBundle.closures.status],
-    ["doe", sourceBundle.doe.status],
-    ["reviews", sourceBundle.reviews.status],
-  ] as const;
-
   await safeSideEffect(
     ctx,
     {
@@ -1029,6 +1207,32 @@ export async function runFirstInsight(
       operation: "record_tool_calls",
     },
     async () => {
+      if (useAgentMode) {
+        for (const execution of toolExecutions) {
+          if (
+            !["weather", "events", "closures", "doe", "reviews"].includes(
+              execution.sourceName,
+            )
+          ) {
+            continue;
+          }
+          await recordToolCall(ctx, {
+            sessionId,
+            messageId: assistantMessageId,
+            turnIndex,
+            toolName: execution.toolName,
+            sourceName: execution.sourceName,
+            status: execution.status,
+            latencyMs: execution.latencyMs,
+            cacheHit: execution.cacheHit,
+            sourceFreshnessSeconds: execution.sourceFreshnessSeconds,
+            errorCode: execution.errorCode,
+            resultJson: execution.result,
+          });
+        }
+        return;
+      }
+
       for (const [sourceName, status] of sourceEntries) {
         await recordToolCall(ctx, {
           sessionId,
@@ -1081,9 +1285,11 @@ export async function runFirstInsight(
           label: location.label,
           placeId: location.placeId,
         })),
-        reviewByLocation: sourceBundle.reviews.byLocation,
-        competitorReview: sourceBundle.competitorReview,
-        sourceStatus: sourceBundle.reviews.status,
+        reviewByLocation: reviewByLocationForPersistence,
+        competitorReview: competitorReviewForPersistence,
+        sourceStatus:
+          sourceEntries.find(([name]) => name === "reviews")?.[1] ??
+          ({ status: "error", errorCode: "REVIEWS_MISSING" } as const),
         distinctId: input.distinctId,
       });
     },
@@ -1093,6 +1299,15 @@ export async function runFirstInsight(
     ([, status]) => status.status !== "ok",
   );
   const latencyMs = nowMs() - startedMs;
+  const sourceStatusMap = Object.fromEntries(sourceEntries) as Record<
+    "weather" | "events" | "closures" | "doe" | "reviews",
+    {
+      status: "ok" | "error" | "stale" | "timeout";
+      freshnessSeconds?: number;
+      cacheHit?: boolean;
+      errorCode?: string;
+    }
+  >;
 
   if (usedFallback) {
     await safeSideEffect(
@@ -1164,19 +1379,16 @@ export async function runFirstInsight(
         {
           recommendation_count: recommendationOutput.recommendations.length,
           format_compliant: true,
-          source_status_weather: sourceBundle.weather.status.status,
-          source_status_events: sourceBundle.events.status.status,
-          source_status_closures: sourceBundle.closures.status.status,
-          source_status_doe: sourceBundle.doe.status.status,
-          source_status_reviews: sourceBundle.reviews.status.status,
-          source_freshness_weather_s:
-            sourceBundle.weather.status.freshnessSeconds,
-          source_freshness_events_s:
-            sourceBundle.events.status.freshnessSeconds,
+          source_status_weather: sourceStatusMap.weather.status,
+          source_status_events: sourceStatusMap.events.status,
+          source_status_closures: sourceStatusMap.closures.status,
+          source_status_doe: sourceStatusMap.doe.status,
+          source_status_reviews: sourceStatusMap.reviews.status,
+          source_freshness_weather_s: sourceStatusMap.weather.freshnessSeconds,
+          source_freshness_events_s: sourceStatusMap.events.freshnessSeconds,
           source_freshness_closures_s:
-            sourceBundle.closures.status.freshnessSeconds,
-          source_freshness_reviews_s:
-            sourceBundle.reviews.status.freshnessSeconds,
+            sourceStatusMap.closures.freshnessSeconds,
+          source_freshness_reviews_s: sourceStatusMap.reviews.freshnessSeconds,
           review_backed_recommendation_count:
             recommendationOutput.recommendations.filter(
               (rec) => rec.reviewBacked,
@@ -1202,16 +1414,77 @@ export async function runFirstInsight(
     snapshots: recommendationOutput.snapshots,
     competitorSnapshot: competitorSnapshotForUi,
     sources: {
-      weather: sourceBundle.weather.status,
-      events: sourceBundle.events.status,
-      closures: sourceBundle.closures.status,
-      doe: sourceBundle.doe.status,
-      reviews: sourceBundle.reviews.status,
+      weather: sourceStatusMap.weather,
+      events: sourceStatusMap.events,
+      closures: sourceStatusMap.closures,
+      doe: sourceStatusMap.doe,
+      reviews: sourceStatusMap.reviews,
     },
     usedFallback,
     firstInsightLatencyMs: latencyMs,
     invalidLocations: parsedLocations.invalid,
   };
+}
+
+export async function runFirstInsight(
+  ctx: IntelligenceContext,
+  input: FirstInsightInput,
+): Promise<FirstInsightOutput> {
+  const startedMs = nowMs();
+  const sessionId = await getOrCreateSession(ctx, input);
+
+  return withSessionLock(sessionId, async (lockWaitMs) => {
+    if (lockWaitMs > 0) {
+      await emitEvent(
+        {
+          event: "agent_lock_waited",
+          trace_id: ctx.traceId,
+          request_id: ctx.requestId,
+          session_id: sessionId,
+          route: "intelligence.firstInsight",
+          env: process.env.NODE_ENV,
+        },
+        {
+          lock_wait_ms: lockWaitMs,
+        },
+      );
+    }
+
+    const run = async () =>
+      runFirstInsightUnlocked(
+        ctx,
+        {
+          ...input,
+          sessionId,
+        },
+        {
+          startedMs,
+        },
+      );
+
+    if (!input.idempotencyKey) {
+      return run();
+    }
+
+    const key = `${sessionId}:${input.idempotencyKey}`;
+    const { reused, value } = await runIdempotent(key, run);
+    if (reused) {
+      await emitEvent(
+        {
+          event: "agent_idempotency_reused",
+          trace_id: ctx.traceId,
+          request_id: ctx.requestId,
+          session_id: sessionId,
+          route: "intelligence.firstInsight",
+          env: process.env.NODE_ENV,
+        },
+        {
+          idempotency_reused: true,
+        },
+      );
+    }
+    return value;
+  });
 }
 
 export async function endChatSession(
