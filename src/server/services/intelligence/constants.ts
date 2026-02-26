@@ -1,4 +1,6 @@
-export const MODEL_ID = "openrouter/haiku";
+import { env } from "@/env";
+
+export const MODEL_ID = `openrouter/${env.OPENROUTER_MODEL}`;
 export const PROMPT_VERSION = "v1.1.0";
 export const RULE_VERSION = "v1.1.0";
 
@@ -18,7 +20,18 @@ export const NYC_BOROUGH_TOKENS = [
   "new york",
 ];
 
-export const NYC_ZIP_PREFIXES = ["100", "101", "102", "103", "104", "111", "112", "113", "114", "116"];
+export const NYC_ZIP_PREFIXES = [
+  "100",
+  "101",
+  "102",
+  "103",
+  "104",
+  "111",
+  "112",
+  "113",
+  "114",
+  "116",
+];
 
 export const IMPACT_VENUES = [
   {
@@ -53,7 +66,7 @@ export const IMPACT_VENUES = [
     id: "ubs",
     name: "UBS Arena",
     lat: 40.7118,
-    lon: -73.7260,
+    lon: -73.726,
     impactRadiusMiles: 0.3,
   },
 ] as const;

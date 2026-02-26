@@ -18,7 +18,7 @@ Pathway answers one question: **"What should I prepare for at my restaurant this
 Users input 1-3 NYC locations and receive actionable recommendations like:
 
 > **Tue 5-9pm:** +1-2 FOH at Hell's Kitchen
-> *(confidence: high, source: Ticketmaster MSG event, updated 1h ago)*
+> _(confidence: high, source: Ticketmaster MSG event, updated 1h ago)_
 
 The system combines multiple data sources to surface staffing signals that would otherwise require manual research.
 
@@ -50,16 +50,16 @@ Restaurant operators input their location(s) and select a starter card. The Inte
   <img src="./public/docs/tech-stack.jpg" alt="Tech Stack" width="500" />
 </p>
 
-| Layer | Technology |
-|-------|------------|
-| Framework | Next.js 15 (App Router) |
-| API | tRPC v11 |
-| Database | PostgreSQL (Neon) |
-| ORM | Drizzle |
-| Styling | Tailwind CSS v4 |
-| AI | OpenRouter (GPT-4o) |
-| Analytics | PostHog |
-| Deployment | Vercel |
+| Layer      | Technology                                     |
+| ---------- | ---------------------------------------------- |
+| Framework  | Next.js 15 (App Router)                        |
+| API        | tRPC v11                                       |
+| Database   | PostgreSQL (Neon)                              |
+| ORM        | Drizzle                                        |
+| Styling    | Tailwind CSS v4                                |
+| AI         | OpenRouter (Kimi K2.5 + Minimax M2.5 fallback) |
+| Analytics  | PostHog                                        |
+| Deployment | Vercel                                         |
 
 ---
 
@@ -130,16 +130,17 @@ pnpm dev
 
 ### Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `DATABASE_URL` | PostgreSQL connection string | Yes |
-| `OPENROUTER_API_KEY` | OpenRouter API key | Yes |
-| `OPENROUTER_MODEL` | Model ID (default: openai/gpt-4o) | No |
-| `OPENWEATHER_API_KEY` | OpenWeather API key | Yes |
-| `TICKETMASTER_API_KEY` | Ticketmaster API key | Yes |
-| `GOOGLE_PLACES_API_KEY` | Google Places API key | Yes |
-| `NEXT_PUBLIC_POSTHOG_KEY` | PostHog project key | No |
-| `NEXT_PUBLIC_POSTHOG_HOST` | PostHog host URL | No |
+| Variable                    | Description                                       | Required |
+| --------------------------- | ------------------------------------------------- | -------- |
+| `DATABASE_URL`              | PostgreSQL connection string                      | Yes      |
+| `OPENROUTER_API_KEY`        | OpenRouter API key                                | Yes      |
+| `OPENROUTER_MODEL`          | Primary model ID (default: moonshotai/kimi-k2.5)  | No       |
+| `OPENROUTER_FALLBACK_MODEL` | Fallback model ID (default: minimax/minimax-m2.5) | No       |
+| `OPENWEATHER_API_KEY`       | OpenWeather API key                               | Yes      |
+| `TICKETMASTER_API_KEY`      | Ticketmaster API key                              | Yes      |
+| `GOOGLE_PLACES_API_KEY`     | Google Places API key                             | Yes      |
+| `NEXT_PUBLIC_POSTHOG_KEY`   | PostHog project key                               | No       |
+| `NEXT_PUBLIC_POSTHOG_HOST`  | PostHog host URL                                  | No       |
 
 ---
 
@@ -150,27 +151,27 @@ pnpm dev
 ```typescript
 // Chat with message history
 api.ai.chat.mutate({
-  messages: [{ role: "user", content: "..." }]
-})
+  messages: [{ role: "user", content: "..." }],
+});
 
 // Simple prompt
 api.ai.prompt.mutate({
   prompt: "...",
-  systemPrompt: "..."
-})
+  systemPrompt: "...",
+});
 ```
 
 ### Weather
 
 ```typescript
 // Current weather by coordinates
-api.weather.current.query({ lat: 40.7, lon: -74.0 })
+api.weather.current.query({ lat: 40.7, lon: -74.0 });
 
 // Current weather by city
-api.weather.currentByCity.query({ city: "New York" })
+api.weather.currentByCity.query({ city: "New York" });
 
 // 5-day forecast
-api.weather.forecast.query({ lat: 40.7, lon: -74.0 })
+api.weather.forecast.query({ lat: 40.7, lon: -74.0 });
 ```
 
 ### Events
@@ -180,11 +181,11 @@ api.weather.forecast.query({ lat: 40.7, lon: -74.0 })
 api.events.search.query({
   city: "New York",
   radius: 10,
-  category: "music"
-})
+  category: "music",
+});
 
 // Get event details
-api.events.getById.query({ eventId: "..." })
+api.events.getById.query({ eventId: "..." });
 ```
 
 ### Places
@@ -194,11 +195,11 @@ api.events.getById.query({ eventId: "..." })
 api.places.search.query({
   query: "pizza",
   lat: 40.7,
-  lon: -74.0
-})
+  lon: -74.0,
+});
 
 // Get place details with reviews
-api.places.details.query({ placeId: "..." })
+api.places.details.query({ placeId: "..." });
 ```
 
 ---
@@ -206,6 +207,7 @@ api.places.details.query({ placeId: "..." })
 ## Brand Guidelines
 
 See [BRAND.md](./BRAND.md) for:
+
 - Color palette (cream, charcoal, forest green)
 - Typography (Playfair Display + Geist Sans)
 - Chat UI component classes
@@ -215,13 +217,13 @@ See [BRAND.md](./BRAND.md) for:
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [BRAND.md](./BRAND.md) | Visual identity and component styles |
-| [docs/restaurant-intelligence-v1.1.md](./docs/restaurant-intelligence-v1.1.md) | Product spec and contracts |
-| [docs/agent-design-decisions.md](./docs/agent-design-decisions.md) | Architecture decisions |
-| [docs/analytics-emission-plan.md](./docs/analytics-emission-plan.md) | Analytics implementation |
-| [docs/landing-page-chat-analytics-spec.md](./docs/landing-page-chat-analytics-spec.md) | Metrics and dashboards |
+| Document                                                                               | Description                          |
+| -------------------------------------------------------------------------------------- | ------------------------------------ |
+| [BRAND.md](./BRAND.md)                                                                 | Visual identity and component styles |
+| [docs/restaurant-intelligence-v1.1.md](./docs/restaurant-intelligence-v1.1.md)         | Product spec and contracts           |
+| [docs/agent-design-decisions.md](./docs/agent-design-decisions.md)                     | Architecture decisions               |
+| [docs/analytics-emission-plan.md](./docs/analytics-emission-plan.md)                   | Analytics implementation             |
+| [docs/landing-page-chat-analytics-spec.md](./docs/landing-page-chat-analytics-spec.md) | Metrics and dashboards               |
 
 ---
 

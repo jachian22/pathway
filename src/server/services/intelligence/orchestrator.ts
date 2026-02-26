@@ -95,44 +95,64 @@ function buildMessage(output: {
   snapshots: FirstInsightOutput["snapshots"];
   recommendations: Recommendation[];
 }): string {
-  const formatRecommendationLine = (rec: Recommendation): string => {
-    const freshness = rec.sourceFreshnessSeconds
-      ? `${Math.floor(rec.sourceFreshnessSeconds / 3600)}h`
-      : "fresh";
-    return `${rec.action} (confidence: ${rec.confidence}, source: ${rec.sourceName}, updated: ${freshness})`;
-  };
+  const summaryHeadline = output.summary.split("\n")[0]?.trim();
+  const headline =
+    summaryHeadline && summaryHeadline.length > 0
+      ? summaryHeadline
+      : "Next 3 days staffing and prep signals:";
+  const lines: string[] = [headline];
 
-  const lines: string[] = [output.summary, "", "Actions:"];
+  const keyDrivers = Array.from(
+    new Set(
+      output.recommendations
+        .flatMap((rec) => rec.explanation.why.slice(0, 1))
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    ),
+  ).slice(0, 2);
 
-  for (const rec of output.recommendations.slice(0, 4)) {
-    lines.push(`- ${formatRecommendationLine(rec)}`);
-
-    if (rec.explanation.why.length > 0) {
-      lines.push(`  Why: ${rec.explanation.why.slice(0, 2).join("; ")}`);
-    }
-    lines.push(`  Trigger: ${rec.explanation.escalationTrigger}`);
-  }
-
-  if (output.snapshots.length > 0) {
-    lines.push("", "Guest Signal Snapshot:");
-    for (const snapshot of output.snapshots.slice(0, 2)) {
-      lines.push(`- ${snapshot.locationLabel}: ${snapshot.text}`);
-      lines.push(
-        `  (sample: ${snapshot.sampleReviewCount}, window: ${snapshot.recencyWindowDays}d, confidence: ${snapshot.confidence})`,
-      );
+  if (keyDrivers.length > 0) {
+    lines.push("", "What stands out:");
+    for (const item of keyDrivers) {
+      lines.push(`- ${item}`);
     }
   }
 
-  const finalAction = output.recommendations[0];
-  if (finalAction) {
+  const snapshot = output.snapshots[0];
+  if (snapshot) {
+    lines.push("", `${snapshot.locationLabel}: ${snapshot.text}`);
+  }
+
+  if (output.recommendations.length > 0) {
     lines.push(
       "",
       "Want to adjust any of these based on your current staffing?",
     );
-    lines.push(`Final action: ${formatRecommendationLine(finalAction)}`);
   }
 
   return lines.join("\n");
+}
+
+function buildValidationFallbackRecommendation(): Recommendation {
+  return {
+    locationLabel: "your NYC locations",
+    action:
+      "Next 24h: run standard staffing and prep, keep delivery timing flexible, and re-check once valid NYC locations are entered",
+    timeWindow: "Next 24h",
+    confidence: "low",
+    sourceName: "system",
+    explanation: {
+      why: [
+        "No valid NYC locations were detected from this input.",
+        "A conservative operating baseline reduces risk until location context is confirmed.",
+      ],
+      deltaReasoning:
+        "Use baseline staffing for the next 24 hours, then re-run once location inputs are corrected.",
+      escalationTrigger:
+        "Escalate only if live service indicators exceed your normal baseline.",
+    },
+    reviewBacked: false,
+  };
 }
 
 async function getOrCreateSession(
@@ -672,14 +692,22 @@ export async function runFirstInsight(
   if (resolvedLocations.length === 0) {
     const fallbackText =
       "I couldn't confidently match that to a NYC location. Please share a fuller NYC address, ZIP, or neighborhood (for example: 350 5th Ave, 11201, or Astoria).";
+    const fallbackRecommendation = buildValidationFallbackRecommendation();
 
-    await insertMessage(
+    const assistantMessageId = await insertMessage(
       ctx.db,
       sessionId,
       turnIndex,
       "assistant",
       fallbackText,
     );
+
+    await persistRecommendations(ctx, {
+      sessionId,
+      messageId: assistantMessageId,
+      turnIndex,
+      recommendations: [fallbackRecommendation],
+    });
 
     await ctx.db.insert(chatFallbacks).values({
       sessionId,
@@ -720,7 +748,7 @@ export async function runFirstInsight(
       summary: fallbackText,
       message: fallbackText,
       locationLabels: [],
-      recommendations: [],
+      recommendations: [fallbackRecommendation],
       snapshots: [],
       sources: {
         weather: { status: "error" },
