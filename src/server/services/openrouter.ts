@@ -384,7 +384,7 @@ export async function chatCompletion(
     return primaryContent;
   }
 
-  if (fallbackModel && primaryResult.failure?.retryable) {
+  if (fallbackModel && !primaryContent) {
     const fallbackResult = await requestChatCompletion(
       messages,
       fallbackModel,
@@ -546,6 +546,15 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
     if (toolCalls.length === 0) {
       if (!message.content) {
         diagnostics.emptyFinalContent = true;
+        if (
+          !retriedWithFallback &&
+          fallbackModel &&
+          currentModel !== fallbackModel
+        ) {
+          currentModel = fallbackModel;
+          retriedWithFallback = true;
+          continue;
+        }
         throw new ToolLoopError(
           "OpenRouter API error: missing final content",
           diagnostics,

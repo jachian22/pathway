@@ -52,6 +52,12 @@ export const env = createEnv({
       .min(128)
       .max(4096)
       .default(600),
+    INTELLIGENCE_AGENT_MAX_TOKENS_NARRATIVE_CAP: z.coerce
+      .number()
+      .int()
+      .min(128)
+      .max(4096)
+      .default(420),
 
     // Data providers
     OPENWEATHER_API_KEY: z.string(),
@@ -100,6 +106,8 @@ export const env = createEnv({
       process.env.INTELLIGENCE_AGENT_MAX_TOKENS_FOLLOWUP,
     INTELLIGENCE_AGENT_MAX_TOKENS_REPAIR:
       process.env.INTELLIGENCE_AGENT_MAX_TOKENS_REPAIR,
+    INTELLIGENCE_AGENT_MAX_TOKENS_NARRATIVE_CAP:
+      process.env.INTELLIGENCE_AGENT_MAX_TOKENS_NARRATIVE_CAP,
 
     // Data providers
     OPENWEATHER_API_KEY: process.env.OPENWEATHER_API_KEY,

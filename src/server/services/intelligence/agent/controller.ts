@@ -59,6 +59,7 @@ export type AgentFailureStage =
 export interface AgentPhaseTelemetry {
   phase:
     | "prefetch_core"
+    | "signal_pack_summary"
     | "llm_tool_loop"
     | "schema_parse"
     | "repair"
@@ -136,7 +137,6 @@ const MAX_REPAIR_TIMEOUT_MS = 1200;
 const MIN_REPAIR_BUDGET_MS = 300;
 const SIGNAL_PACK_SUMMARY_TIMEOUT_MS = 700;
 const SIGNAL_PACK_SUMMARY_MAX_TOKENS = 220;
-const NARRATIVE_MAX_TOKENS = 260;
 
 interface SignalPackLocation {
   locationLabel: string;
@@ -466,14 +466,6 @@ async function withLocalTimeout<T>(
   });
 }
 
-function shouldSkipRepairForProviderEmpty(reason?: string): boolean {
-  if (!reason) return false;
-  return (
-    reason.includes("missing final content") ||
-    reason.includes("No response content from OpenRouter")
-  );
-}
-
 function buildMessage(params: {
   narrative: string;
   recommendations: Recommendation[];
@@ -552,7 +544,7 @@ export async function runAgentTurn(
     : env.INTELLIGENCE_AGENT_MAX_TOKENS_FOLLOWUP;
   const maxTokensForNarrative = Math.min(
     maxTokensForTurn,
-    NARRATIVE_MAX_TOKENS,
+    env.INTELLIGENCE_AGENT_MAX_TOKENS_NARRATIVE_CAP,
   );
   const modelOverride = isFirstTurn
     ? (env.OPENROUTER_FAST_MODEL ?? undefined)
@@ -583,6 +575,7 @@ export async function runAgentTurn(
     deterministicSignalPack,
   );
   let signalPackSummary = deterministicSignalPackSummary;
+  const signalPackSummaryStartedAtMs = Date.now();
   const summaryBudgetMs = Math.min(
     SIGNAL_PACK_SUMMARY_TIMEOUT_MS,
     Math.max(0, loopDeadlineMs - Date.now() - MIN_REPAIR_BUDGET_MS),
@@ -596,9 +589,27 @@ export async function runAgentTurn(
         model: modelOverride,
         timeoutMs: summaryBudgetMs,
       });
+      phaseTelemetry.push({
+        phase: "signal_pack_summary",
+        status: "ok",
+        durationMs: Date.now() - signalPackSummaryStartedAtMs,
+      });
     } catch {
       signalPackSummary = deterministicSignalPackSummary;
+      phaseTelemetry.push({
+        phase: "signal_pack_summary",
+        status: "error",
+        durationMs: Date.now() - signalPackSummaryStartedAtMs,
+        failureStage: "provider",
+        failureCode: "AGENT_SIGNAL_PACK_SUMMARY_FAILED",
+      });
     }
+  } else {
+    phaseTelemetry.push({
+      phase: "signal_pack_summary",
+      status: "ok",
+      durationMs: 0,
+    });
   }
 
   const systemPrompt = [
@@ -765,14 +776,11 @@ export async function runAgentTurn(
       llmLoopError instanceof Error ? llmLoopError.message : "unknown_error";
     const repairStartedAtMs = Date.now();
     const budgetLeftForRepairMs = remainingBudgetMs(turnDeadlineMs);
-    const skipForProviderEmpty = shouldSkipRepairForProviderEmpty(reason);
     const skipForBudget = budgetLeftForRepairMs < MIN_REPAIR_BUDGET_MS;
 
-    if (skipForProviderEmpty || skipForBudget) {
+    if (skipForBudget) {
       degraded = true;
-      repairFailureReason = skipForProviderEmpty
-        ? "AGENT_REPAIR_SKIPPED_PROVIDER_EMPTY"
-        : "AGENT_TURN_BUDGET_EXCEEDED";
+      repairFailureReason = "AGENT_TURN_BUDGET_EXCEEDED";
       repairFailureStage = "repair";
       repairFailureCode ??= repairFailureReason;
       phaseTelemetry.push({
