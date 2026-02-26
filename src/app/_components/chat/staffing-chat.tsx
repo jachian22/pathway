@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { captureEvent, getDistinctId } from "@/app/_lib/analytics";
+import { FollowUpComposer } from "@/app/_components/chat/follow-up-composer";
+import {
+  InsightSetupPanel,
+  type InsightSetupSubmitPayload,
+} from "@/app/_components/chat/insight-setup-panel";
 import { RecommendationBlock } from "@/app/_components/chat/recommendation-block";
 import { api, type RouterOutputs } from "@/trpc/react";
 
@@ -25,35 +30,13 @@ type PendingClarification = {
 
 type ErrorBannerState = {
   message: string;
-  retryFollowup?: string;
-};
-
-function parseLocationLines(value: string): string[] {
-  const normalized = value.trim();
-  if (normalized.length === 0) return [];
-
-  const splitInput = () => {
-    if (normalized.includes("\n") || normalized.includes(";")) {
-      return normalized.split(/[\n;]+/);
-    }
-
-    const zipMatches = Array.from(normalized.matchAll(/\b\d{5}(?:-\d{4})?\b/g));
-    if (zipMatches.length <= 1) {
-      return [normalized];
-    }
-
-    const segmented = normalized.split(/(?<=\b\d{5}(?:-\d{4})?)\s*,\s*/);
-    return segmented.length > 0 ? segmented : [normalized];
+  retryPayload: {
+    withFollowup?: string;
+    parsedLocationsInput?: string[];
+    competitorNameInput?: string;
+    suppressUserEcho?: boolean;
   };
-
-  return Array.from(
-    new Set(
-      splitInput()
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0),
-    ),
-  ).slice(0, 3);
-}
+};
 
 function parseBaselineMessage(
   message: string,
@@ -112,13 +95,11 @@ function resolveBaselineClarification(
 }
 
 export function StaffingChat() {
-  const [locationsInput, setLocationsInput] = useState("");
   const [selectedCard, setSelectedCard] = useState<CardType>("staffing");
-  const [competitorName, setCompetitorName] = useState("");
-  const [followUpInput, setFollowUpInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [locationLabels, setLocationLabels] = useState<string[]>([]);
   const [activeLocations, setActiveLocations] = useState<string[]>([]);
+  const [activeCompetitorName, setActiveCompetitorName] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorBanner, setErrorBanner] = useState<ErrorBannerState | null>(null);
   const [pendingClarification, setPendingClarification] =
@@ -127,15 +108,12 @@ export function StaffingChat() {
   const hasCapturedStart = useRef(false);
   const hasCapturedFirstInsight = useRef(false);
   const sessionStartedAtRef = useRef<number>(Date.now());
+  const sessionIdRef = useRef<string | null>(null);
 
   const firstInsight = api.intelligence.firstInsight.useMutation();
   const refineInsight = api.intelligence.refineInsight.useMutation();
   const endSession = api.intelligence.endSession.useMutation();
-
-  const parsedLocations = useMemo(
-    () => parseLocationLines(locationsInput),
-    [locationsInput],
-  );
+  const endSessionMutateRef = useRef(endSession.mutate);
 
   const isLoading = firstInsight.isPending || refineInsight.isPending;
 
@@ -152,15 +130,22 @@ export function StaffingChat() {
     });
   }, []);
 
-  const submitInsight = async (
-    withFollowup?: string,
-    options?: { suppressUserEcho?: boolean },
-  ) => {
+  const submitInsight = async (params?: {
+    withFollowup?: string;
+    parsedLocationsInput?: string[];
+    competitorNameInput?: string;
+    suppressUserEcho?: boolean;
+  }) => {
+    const withFollowup = params?.withFollowup;
     setErrorBanner(null);
-    const locationsForRequest =
-      withFollowup && parsedLocations.length === 0
+    const locationsForRequest = withFollowup
+      ? activeLocations.length > 0
         ? activeLocations
-        : parsedLocations;
+        : (params?.parsedLocationsInput ?? [])
+      : (params?.parsedLocationsInput ?? []);
+    const competitorNameForRequest = withFollowup
+      ? activeCompetitorName
+      : (params?.competitorNameInput?.trim() ?? "");
     const locationsChanged =
       !withFollowup &&
       sessionId !== null &&
@@ -200,9 +185,9 @@ export function StaffingChat() {
       });
     }
 
-    if (competitorName.trim()) {
+    if (competitorNameForRequest) {
       captureEvent("competitor_check_requested", {
-        competitor_query: competitorName.trim(),
+        competitor_query: competitorNameForRequest,
         competitor_resolved: null,
         competitor_place_id: null,
       });
@@ -216,7 +201,7 @@ export function StaffingChat() {
       ambiguous_count: 0,
     });
 
-    if (withFollowup && !options?.suppressUserEcho) {
+    if (withFollowup && !params?.suppressUserEcho) {
       setMessages((prev) => [
         ...prev,
         {
@@ -314,7 +299,7 @@ export function StaffingChat() {
       distinctId,
       cardType: selectedCard,
       locations: locationsForRequest,
-      competitorName: competitorName.trim() || undefined,
+      competitorName: competitorNameForRequest || undefined,
       baselineContext,
     };
 
@@ -324,6 +309,7 @@ export function StaffingChat() {
       setLocationLabels([]);
       setPendingClarification(null);
       setActiveLocations([]);
+      setActiveCompetitorName("");
     }
 
     try {
@@ -337,6 +323,7 @@ export function StaffingChat() {
       setSessionId(response.sessionId);
       setLocationLabels(response.locationLabels);
       setActiveLocations(locationsForRequest);
+      setActiveCompetitorName(competitorNameForRequest);
       setErrorBanner(null);
 
       setMessages((prev) => [
@@ -382,52 +369,36 @@ export function StaffingChat() {
       setErrorBanner({
         message:
           "I hit a temporary error while generating your insight. Please retry.",
-        retryFollowup: withFollowup,
+        retryPayload: {
+          withFollowup,
+          parsedLocationsInput: locationsForRequest,
+          competitorNameInput: competitorNameForRequest,
+          suppressUserEcho: true,
+        },
       });
       return;
     }
   };
 
-  const resetSessionForNewLocations = () => {
-    if (!sessionId) return;
-    setSessionId(null);
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `assistant-reset-${Date.now()}`,
-        role: "assistant",
-        text: "Location list changed. I will start a fresh run on your next insight request.",
-      },
-    ]);
-    setLocationLabels([]);
-    setPendingClarification(null);
-    setActiveLocations([]);
-    setErrorBanner(null);
-  };
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   useEffect(() => {
-    if (!sessionId) return;
-    if (JSON.stringify(parsedLocations) === JSON.stringify(activeLocations))
-      return;
-    resetSessionForNewLocations();
-    captureEvent("location_set_changed_mid_session", {
-      previous_count: activeLocations.length,
-      next_count: parsedLocations.length,
-      action: "session_reset",
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationsInput]);
+    endSessionMutateRef.current = endSession.mutate;
+  }, [endSession.mutate]);
 
   useEffect(() => {
     return () => {
-      if (!sessionId) return;
-      endSession.mutate({
-        sessionId,
+      const latestSessionId = sessionIdRef.current;
+      if (!latestSessionId) return;
+      endSessionMutateRef.current({
+        sessionId: latestSessionId,
         distinctId: getDistinctId(),
         endReason: "user_exit",
       });
     };
-  }, [sessionId, endSession]);
+  }, []);
 
   return (
     <div className="container-brand py-10 sm:py-16">
@@ -445,73 +416,17 @@ export function StaffingChat() {
               60 seconds.
             </p>
 
-            <div className="card-accent mt-8">
-              <label
-                className="text-charcoal text-sm font-medium"
-                htmlFor="locations"
-              >
-                NYC locations (1-3)
-              </label>
-              <textarea
-                id="locations"
-                className="chat-input-multiline mt-2 min-h-[112px]"
-                placeholder="Paste addresses, ZIPs, or neighborhoods (one per line or comma separated)"
-                value={locationsInput}
-                onChange={(event) => setLocationsInput(event.target.value)}
-              />
-              <p className="text-text-secondary mt-2 text-xs">
-                Detected: {parsedLocations.length}/3 locations
-              </p>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={`suggestion-chip ${selectedCard === "staffing" ? "border-forest" : ""}`}
-                  onClick={() => setSelectedCard("staffing")}
-                >
-                  Help me plan staffing
-                </button>
-                <button
-                  type="button"
-                  className={`suggestion-chip ${selectedCard === "risk" ? "border-forest" : ""}`}
-                  onClick={() => setSelectedCard("risk")}
-                >
-                  What should I watch out for?
-                </button>
-                <button
-                  type="button"
-                  className={`suggestion-chip ${selectedCard === "opportunity" ? "border-forest" : ""}`}
-                  onClick={() => setSelectedCard("opportunity")}
-                >
-                  Any opportunities I’m missing?
-                </button>
-              </div>
-
-              <div className="mt-4">
-                <label
-                  className="text-charcoal text-sm font-medium"
-                  htmlFor="competitor"
-                >
-                  Optional: one competitor to compare
-                </label>
-                <input
-                  id="competitor"
-                  className="chat-input mt-2"
-                  placeholder="Name one competitor restaurant"
-                  value={competitorName}
-                  onChange={(event) => setCompetitorName(event.target.value)}
-                />
-              </div>
-
-              <button
-                type="button"
-                className="btn-primary mt-6"
-                disabled={parsedLocations.length === 0 || isLoading}
-                onClick={() => void submitInsight()}
-              >
-                {isLoading ? "Analyzing…" : "Get first insight"}
-              </button>
-            </div>
+            <InsightSetupPanel
+              isLoading={isLoading}
+              selectedCard={selectedCard}
+              onSelectCard={setSelectedCard}
+              onSubmit={(payload: InsightSetupSubmitPayload) =>
+                void submitInsight({
+                  parsedLocationsInput: payload.parsedLocations,
+                  competitorNameInput: payload.competitorName,
+                })
+              }
+            />
           </section>
 
           <section className="chat-container flex min-h-[620px] flex-col overflow-hidden">
@@ -534,11 +449,11 @@ export function StaffingChat() {
                     onClick={() => {
                       captureEvent("chat_retry_clicked", {
                         source: "error_banner",
-                        has_followup: Boolean(errorBanner.retryFollowup),
+                        has_followup: Boolean(
+                          errorBanner.retryPayload.withFollowup,
+                        ),
                       });
-                      void submitInsight(errorBanner.retryFollowup, {
-                        suppressUserEcho: true,
-                      });
+                      void submitInsight(errorBanner.retryPayload);
                     }}
                   >
                     Retry
@@ -599,37 +514,11 @@ export function StaffingChat() {
               )}
             </div>
 
-            <div className="chat-input-container">
-              <form
-                className="flex gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (!followUpInput.trim()) return;
-                  const value = followUpInput.trim();
-                  setFollowUpInput("");
-                  void submitInsight(value);
-                }}
-              >
-                <input
-                  className="chat-input"
-                  placeholder="Example: We usually run 4 FOH on Tuesday nights"
-                  value={followUpInput}
-                  onChange={(event) => setFollowUpInput(event.target.value)}
-                />
-                <button
-                  type="submit"
-                  className="chat-send-btn"
-                  disabled={isLoading || !sessionId}
-                >
-                  Send
-                </button>
-              </form>
-              {!sessionId ? (
-                <p className="text-text-secondary mt-2 text-xs">
-                  Run first insight before follow-up refinement.
-                </p>
-              ) : null}
-            </div>
+            <FollowUpComposer
+              isLoading={isLoading}
+              hasSession={Boolean(sessionId)}
+              onSend={(value) => void submitInsight({ withFollowup: value })}
+            />
           </section>
         </div>
       </div>
