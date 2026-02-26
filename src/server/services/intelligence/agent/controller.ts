@@ -117,6 +117,10 @@ export interface AgentTurnOutput {
   degraded: boolean;
   failureReason?: string;
   repairFailureReason?: string;
+  rootFailureStage: AgentFailureStage;
+  rootFailureCode?: string;
+  repairFailureStage?: AgentFailureStage;
+  repairFailureCode?: string;
   failureStage: AgentFailureStage;
   failureCode?: string;
   diagnostics: {
@@ -285,7 +289,7 @@ function buildCompetitorSnapshot(
   if (competitor.status === "limit_reached") {
     return {
       label: "Competitor check",
-      text: "Already used in this session (v1.1 limit is one competitor check).",
+      text: "Already used in this session. You can run one competitor check per chat.",
       confidence: "low",
       sampleReviewCount: 0,
       recencyWindowDays: 90,
@@ -422,8 +426,10 @@ export async function runAgentTurn(
   let degraded = false;
   let failureReason: string | undefined;
   let repairFailureReason: string | undefined;
-  let failureStage: AgentFailureStage = "none";
-  let failureCode: string | undefined;
+  let rootFailureStage: AgentFailureStage = "none";
+  let rootFailureCode: string | undefined;
+  let repairFailureStage: AgentFailureStage | undefined;
+  let repairFailureCode: string | undefined;
   let parseOk = false;
   let repairAttempted = false;
   let repairOk = false;
@@ -460,14 +466,14 @@ export async function runAgentTurn(
       toolLoopDiagnostics = error.diagnostics;
     }
     failureReason = error instanceof Error ? error.message : "unknown_error";
-    failureCode = inferFailureCode(error);
-    failureStage = inferFailureStage(error);
+    rootFailureCode = inferFailureCode(error);
+    rootFailureStage = inferFailureStage(error);
     phaseTelemetry.push({
       phase: "llm_tool_loop",
       status: "error",
       durationMs: Date.now() - llmLoopStartedAtMs,
-      failureStage,
-      failureCode,
+      failureStage: rootFailureStage,
+      failureCode: rootFailureCode,
     });
   }
 
@@ -484,14 +490,14 @@ export async function runAgentTurn(
     } catch (error) {
       llmLoopError = error;
       failureReason = error instanceof Error ? error.message : "unknown_error";
-      failureCode = inferFailureCode(error);
-      failureStage = "schema_parse";
+      rootFailureCode = inferFailureCode(error);
+      rootFailureStage = "schema_parse";
       phaseTelemetry.push({
         phase: "schema_parse",
         status: "error",
         durationMs: Date.now() - parseStartedAtMs,
-        failureStage,
-        failureCode,
+        failureStage: rootFailureStage,
+        failureCode: rootFailureCode,
       });
     }
   }
@@ -509,14 +515,14 @@ export async function runAgentTurn(
       repairFailureReason = skipForProviderEmpty
         ? "AGENT_REPAIR_SKIPPED_PROVIDER_EMPTY"
         : "AGENT_TURN_BUDGET_EXCEEDED";
-      failureStage = "repair";
-      failureCode ??= repairFailureReason;
+      repairFailureStage = "repair";
+      repairFailureCode ??= repairFailureReason;
       phaseTelemetry.push({
         phase: "repair",
         status: "error",
         durationMs: Date.now() - repairStartedAtMs,
-        failureStage,
-        failureCode,
+        failureStage: repairFailureStage,
+        failureCode: repairFailureCode,
       });
     } else {
       repairAttempted = true;
@@ -552,14 +558,14 @@ export async function runAgentTurn(
           repairError instanceof Error
             ? repairError.message
             : "unknown_repair_error";
-        failureCode ??= inferFailureCode(repairError);
-        failureStage = "repair";
+        repairFailureStage = "repair";
+        repairFailureCode ??= inferFailureCode(repairError);
         phaseTelemetry.push({
           phase: "repair",
           status: "error",
           durationMs: Date.now() - repairStartedAtMs,
-          failureStage,
-          failureCode,
+          failureStage: repairFailureStage,
+          failureCode: repairFailureCode,
         });
       }
     }
@@ -576,8 +582,7 @@ export async function runAgentTurn(
           confidence: "low",
           sourceName: "system",
           why: ["Live model/tool synthesis failed for this turn."],
-          deltaReasoning:
-            "Fallback keeps operations stable under uncertainty.",
+          deltaReasoning: "Fallback keeps operations stable under uncertainty.",
           escalationTrigger:
             "Escalate only if live service indicators exceed baseline.",
           reviewBacked: false,
@@ -590,7 +595,8 @@ export async function runAgentTurn(
         },
       ],
       assumptions: ["Fallback applied due to agent synthesis failure."],
-      followUpQuestion: "Want me to retry now with the same locations and baseline?",
+      followUpQuestion:
+        "Want me to retry now with the same locations and baseline?",
     };
   }
 
@@ -617,15 +623,17 @@ export async function runAgentTurn(
     });
   } catch (error) {
     degraded = true;
-    failureStage = "policy";
-    failureCode = "AGENT_POLICY_ERROR";
+    if (rootFailureStage === "none") {
+      rootFailureStage = "policy";
+      rootFailureCode = "AGENT_POLICY_ERROR";
+    }
     failureReason = error instanceof Error ? error.message : "unknown_error";
     phaseTelemetry.push({
       phase: "policy",
       status: "error",
       durationMs: Date.now() - policyStartedAtMs,
-      failureStage,
-      failureCode,
+      failureStage: "policy",
+      failureCode: "AGENT_POLICY_ERROR",
     });
     policyApplied = {
       recommendations: [
@@ -679,8 +687,12 @@ export async function runAgentTurn(
     degraded,
     failureReason,
     repairFailureReason,
-    failureStage,
-    failureCode,
+    rootFailureStage,
+    rootFailureCode,
+    repairFailureStage,
+    repairFailureCode,
+    failureStage: rootFailureStage,
+    failureCode: rootFailureCode,
     diagnostics: {
       parseOk,
       repairAttempted,

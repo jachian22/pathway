@@ -135,11 +135,11 @@
 
   /* Message bubbles */
   .msg-user {
-    @apply bg-msg-user text-msg-user-text rounded-2xl rounded-br-md px-4 py-3 max-w-[85%] ml-auto;
+    @apply bg-msg-user text-msg-user-text rounded-2xl rounded-br-md px-4 py-3 max-w-[85%] ml-auto whitespace-pre-line;
   }
 
   .msg-ai {
-    @apply bg-msg-ai text-msg-ai-text rounded-2xl rounded-bl-md px-4 py-3 max-w-[85%] border border-surface-3;
+    @apply bg-msg-ai text-msg-ai-text rounded-2xl rounded-bl-md px-4 py-3 max-w-[85%] border border-surface-3 whitespace-pre-line;
   }
 
   /* Message metadata (timestamp, etc.) */

@@ -146,9 +146,14 @@ export class ToolLoopError extends Error {
   }
 }
 
-function toFailureCode(status?: number): string | undefined {
-  if (!status) return undefined;
-  return `OPENROUTER_${status}`;
+function toFailureCodeFromFailure(failure: ModelFailure): string {
+  if (failure.status) {
+    return `OPENROUTER_${failure.status}`;
+  }
+  if (failure.message.toLowerCase().includes("timed out")) {
+    return "OPENROUTER_TIMEOUT";
+  }
+  return "OPENROUTER_ERROR";
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -213,41 +218,58 @@ async function requestChatCompletion(
   const timeoutMs = options?.timeoutMs;
   const controller =
     timeoutMs && timeoutMs > 0 ? new AbortController() : undefined;
-  const timeoutHandle =
-    controller && timeoutMs
-      ? setTimeout(() => controller.abort(), timeoutMs)
-      : undefined;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
   try {
-    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://pathway-liart.vercel.app",
-        "X-Title": "Pathway",
+    const fetchPromise = fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+          "HTTP-Referer": "https://pathway-liart.vercel.app",
+          "X-Title": "Pathway",
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: options?.temperature ?? 0.7,
+          max_tokens: options?.maxTokens ?? 1024,
+          tools: tools?.map((tool) => ({
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            },
+          })),
+        }),
+        signal: controller?.signal,
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.maxTokens ?? 1024,
-        tools: tools?.map((tool) => ({
-          type: "function",
-          function: {
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters,
-          },
-        })),
-      }),
-      signal: controller?.signal,
-    });
+    );
+
+    if (timeoutMs && timeoutMs > 0) {
+      const timeoutPromise = new Promise<Response>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          controller?.abort();
+          reject(new Error(`REQUEST_TIMEOUT_${timeoutMs}`));
+        }, timeoutMs);
+      });
+
+      response = await Promise.race([fetchPromise, timeoutPromise]);
+    } else {
+      response = await fetchPromise;
+    }
   } catch (error) {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
     }
-    if (error instanceof Error && error.name === "AbortError") {
+    if (
+      error instanceof Error &&
+      (error.name === "AbortError" ||
+        error.message.startsWith("REQUEST_TIMEOUT_"))
+    ) {
       return {
         failure: {
           message: `Request timed out after ${timeoutMs ?? 0}ms`,
@@ -440,19 +462,20 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
     );
 
     if (result.failure) {
+      const failureCode = toFailureCodeFromFailure(result.failure);
       diagnostics.modelAttempts.push({
         attemptNumber: diagnostics.modelAttempts.length + 1,
         model: currentModel,
         status: "error",
         statusCode: result.failure.status,
         retryable: result.failure.retryable,
-        errorCode: toFailureCode(result.failure.status),
+        errorCode: failureCode,
       });
       diagnostics.providerFailures.push({
         model: currentModel,
         statusCode: result.failure.status,
         retryable: result.failure.retryable,
-        errorCode: toFailureCode(result.failure.status),
+        errorCode: failureCode,
       });
       if (
         !retriedWithFallback &&
@@ -514,6 +537,12 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
     });
 
     for (const call of toolCalls) {
+      const remainingMsBeforeTool =
+        params.deadlineMs !== undefined ? params.deadlineMs - Date.now() : null;
+      if (remainingMsBeforeTool !== null && remainingMsBeforeTool <= 0) {
+        throw new ToolLoopError("AGENT_TURN_BUDGET_EXCEEDED", diagnostics);
+      }
+
       if (toolExecutions.length >= maxToolCalls) {
         diagnostics.toolCallLimitHit = true;
         throw new ToolLoopError("AGENT_TOOL_CALL_LIMIT_REACHED", diagnostics);
