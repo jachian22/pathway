@@ -741,7 +741,11 @@ async function syncBaselineMemory(
 async function runFirstInsightUnlocked(
   ctx: IntelligenceContext,
   input: FirstInsightInput & { sessionId: string },
-  params: { startedMs: number },
+  params: {
+    startedMs: number;
+    lockWaitMs: number;
+    idempotencyReused: boolean;
+  },
 ): Promise<FirstInsightOutput> {
   const startedMs = params.startedMs;
   const sessionId = input.sessionId;
@@ -971,6 +975,11 @@ async function runFirstInsightUnlocked(
     errorCode?: string;
     result: Record<string, unknown>;
   }> = [];
+  let agentOutputForTelemetry: Awaited<ReturnType<typeof runAgentTurn>> | null =
+    null;
+  let agentFallbackApplied = false;
+  let agentFallbackReason: string | undefined;
+  let agentFallbackRepairFailureReason: string | undefined;
   if (useAgentMode) {
     const agentOutput = await runAgentTurn({
       db: ctx.db,
@@ -985,6 +994,7 @@ async function runFirstInsightUnlocked(
       competitor,
       competitorName: input.competitorName,
     });
+    agentOutputForTelemetry = agentOutput;
 
     recommendationOutput = {
       summary: agentOutput.summary,
@@ -1053,8 +1063,109 @@ async function runFirstInsightUnlocked(
             policy_caps_applied: agentOutput.policyCapsApplied,
             tool_call_count: toolExecutions.length,
             assumptions_count: agentOutput.assumptions.length,
+            degraded: agentOutput.degraded,
+            failure_reason: agentOutput.failureReason,
+            repair_failure_reason: agentOutput.repairFailureReason,
+            failure_stage: agentOutput.failureStage,
+            failure_code: agentOutput.failureCode,
+            parse_ok: agentOutput.diagnostics.parseOk,
+            repair_attempted: agentOutput.diagnostics.repairAttempted,
+            repair_ok: agentOutput.diagnostics.repairOk,
+            loop_rounds:
+              agentOutput.diagnostics.toolLoop?.roundsExecuted ?? undefined,
+            loop_tool_call_limit_hit:
+              agentOutput.diagnostics.toolLoop?.toolCallLimitHit ?? false,
+            loop_round_limit_hit:
+              agentOutput.diagnostics.toolLoop?.roundLimitHit ?? false,
+            loop_unknown_tool_count:
+              agentOutput.diagnostics.toolLoop?.unknownToolCount ?? 0,
+            loop_arg_parse_failure_count:
+              agentOutput.diagnostics.toolLoop?.argParseFailureCount ?? 0,
           },
         );
+      },
+    );
+
+    await safeSideEffect(
+      ctx,
+      {
+        sessionId,
+        turnIndex,
+        operation: "emit_agent_phase_diagnostics",
+      },
+      async () => {
+        for (const phase of agentOutput.phaseTelemetry) {
+          await emitEvent(
+            {
+              event: "agent.turn.phase",
+              trace_id: ctx.traceId,
+              request_id: ctx.requestId,
+              session_id: sessionId,
+              turn_index: turnIndex,
+              route: "intelligence.firstInsight",
+              env: process.env.NODE_ENV,
+            },
+            {
+              phase: phase.phase,
+              phase_status: phase.status,
+              phase_ms: phase.durationMs,
+              failure_stage: phase.failureStage,
+              failure_code: phase.failureCode,
+            },
+            { level: phase.status === "ok" ? "info" : "warn" },
+          );
+        }
+
+        const loopDiagnostics = agentOutput.diagnostics.toolLoop;
+        if (!loopDiagnostics) {
+          return;
+        }
+
+        for (const attempt of loopDiagnostics.modelAttempts) {
+          await emitEvent(
+            {
+              event: "agent.model.attempt",
+              trace_id: ctx.traceId,
+              request_id: ctx.requestId,
+              session_id: sessionId,
+              turn_index: turnIndex,
+              route: "intelligence.firstInsight",
+              env: process.env.NODE_ENV,
+            },
+            {
+              attempt_number: attempt.attemptNumber,
+              model: attempt.model,
+              model_attempt_status: attempt.status,
+              status_code: attempt.statusCode,
+              retryable: attempt.retryable,
+              finish_reason: attempt.finishReason,
+              has_tool_calls: attempt.hasToolCalls,
+              failure_code: attempt.errorCode,
+            },
+            { level: attempt.status === "ok" ? "info" : "warn" },
+          );
+        }
+
+        for (const providerFailure of loopDiagnostics.providerFailures) {
+          await emitEvent(
+            {
+              event: "agent.provider.failure",
+              trace_id: ctx.traceId,
+              request_id: ctx.requestId,
+              session_id: sessionId,
+              turn_index: turnIndex,
+              route: "intelligence.firstInsight",
+              env: process.env.NODE_ENV,
+            },
+            {
+              model: providerFailure.model,
+              status_code: providerFailure.statusCode,
+              retryable: providerFailure.retryable,
+              failure_code: providerFailure.errorCode,
+            },
+            { level: "warn" },
+          );
+        }
       },
     );
 
@@ -1086,6 +1197,149 @@ async function runFirstInsightUnlocked(
         }
       },
     );
+
+    const shouldFallbackToDeterministic =
+      agentOutput.degraded ||
+      agentOutput.recommendations.every((rec) => rec.sourceName === "system");
+
+    if (shouldFallbackToDeterministic) {
+      agentFallbackApplied = true;
+      agentFallbackReason =
+        agentOutput.failureReason ??
+        "agent_returned_system_only_recommendations";
+      agentFallbackRepairFailureReason = agentOutput.repairFailureReason;
+      await safeSideEffect(
+        ctx,
+        {
+          sessionId,
+          turnIndex,
+          operation: "emit_agent_fallback_applied",
+        },
+        async () => {
+          await emitEvent(
+            {
+              event: "agent_fallback_applied",
+              trace_id: ctx.traceId,
+              request_id: ctx.requestId,
+              session_id: sessionId,
+              turn_index: turnIndex,
+              route: "intelligence.firstInsight",
+              env: process.env.NODE_ENV,
+            },
+            {
+              reason: agentFallbackReason,
+              repair_failure_reason: agentFallbackRepairFailureReason,
+              failure_stage: agentOutput.failureStage,
+              failure_code: agentOutput.failureCode,
+            },
+            { level: "warn" },
+          );
+        },
+      );
+
+      const sourceBundle = await fetchSourceBundle(
+        ctx.db,
+        resolvedLocations,
+        competitor.placeId,
+      );
+
+      const recommendationInputs = resolvedLocations.map((location, idx) => ({
+        locationLabel: location.label,
+        weather: sourceBundle.weather.byLocation[location.label],
+        events: sourceBundle.events.byLocation[location.label],
+        closures: sourceBundle.closures.byLocation[location.label],
+        review: sourceBundle.reviews.byLocation[location.label],
+        baselineFoh: baselineByLocation.get(location.label),
+        baselineAssumed: !baselineByLocation.has(location.label) && idx === 0,
+      }));
+
+      competitorSnapshotForUi = (() => {
+        if (competitor.status === "not_requested") {
+          return undefined;
+        }
+
+        if (competitor.status === "limit_reached") {
+          return {
+            label: "Competitor check",
+            text: "Already used in this session (v1.1 limit is one competitor check).",
+            confidence: "low",
+            sampleReviewCount: 0,
+            recencyWindowDays: 90,
+            status: "limit_reached",
+          };
+        }
+
+        if (competitor.status === "not_found") {
+          return {
+            label: input.competitorName ?? "Competitor",
+            text:
+              competitor.snapshot ??
+              "Could not resolve this competitor from places search.",
+            confidence: "low",
+            sampleReviewCount: 0,
+            recencyWindowDays: 90,
+            status: "not_found",
+          };
+        }
+
+        if (sourceBundle.competitorReview) {
+          return {
+            label: competitor.resolvedName ?? "Competitor",
+            text: sourceBundle.competitorReview.guestSnapshot,
+            confidence: sourceBundle.competitorReview.confidence,
+            sampleReviewCount: sourceBundle.competitorReview.sampleReviewCount,
+            recencyWindowDays: sourceBundle.competitorReview.recencyWindowDays,
+            status: "resolved_with_reviews",
+          };
+        }
+
+        return {
+          label: competitor.resolvedName ?? "Competitor",
+          text: "Resolved successfully, but there is not enough recent review evidence to summarize yet.",
+          confidence: "low",
+          sampleReviewCount: 0,
+          recencyWindowDays: 90,
+          status: "resolved_no_recent_reviews",
+        };
+      })();
+
+      const competitorSummaryLine = competitorSnapshotForUi
+        ? `Competitor check: ${competitorSnapshotForUi.label}. ${competitorSnapshotForUi.text}`
+        : undefined;
+
+      recommendationOutput = buildRecommendations(
+        input.cardType,
+        recommendationInputs,
+        {
+          doeDays: sourceBundle.doe.days,
+          competitorSnapshot: competitorSummaryLine,
+        },
+      );
+
+      messageText = buildMessage({
+        summary: recommendationOutput.summary,
+        recommendations: recommendationOutput.recommendations,
+        competitorSnapshot: competitorSnapshotForUi,
+      });
+
+      sourceEntries = [
+        ["weather", sourceBundle.weather.status],
+        ["events", sourceBundle.events.status],
+        ["closures", sourceBundle.closures.status],
+        ["doe", sourceBundle.doe.status],
+        ["reviews", sourceBundle.reviews.status],
+      ];
+      reviewByLocationForPersistence = sourceBundle.reviews.byLocation;
+      competitorReviewForPersistence = sourceBundle.competitorReview
+        ? {
+            placeId: sourceBundle.competitorReview.placeId,
+            sampleReviewCount: sourceBundle.competitorReview.sampleReviewCount,
+            evidenceCount: sourceBundle.competitorReview.evidenceCount,
+            recencyWindowDays: sourceBundle.competitorReview.recencyWindowDays,
+            themes: sourceBundle.competitorReview.themes,
+          }
+        : null;
+    }
   } else {
     const sourceBundle = await fetchSourceBundle(
       ctx.db,
@@ -1404,6 +1658,81 @@ async function runFirstInsightUnlocked(
     },
   );
 
+  if (useAgentMode && agentOutputForTelemetry) {
+    await safeSideEffect(
+      ctx,
+      {
+        sessionId,
+        turnIndex,
+        operation: "emit_agent_turn_wide",
+      },
+      async () => {
+        const loopDiagnostics = agentOutputForTelemetry.diagnostics.toolLoop;
+        await emitEvent(
+          {
+            event: "agent.turn.wide",
+            trace_id: ctx.traceId,
+            request_id: ctx.requestId,
+            session_id: sessionId,
+            turn_index: turnIndex,
+            route: "intelligence.firstInsight",
+            latency_ms: latencyMs,
+            card_type: input.cardType,
+            location_count: resolvedLocations.length,
+            model: MODEL_ID,
+            prompt_version: agentOutputForTelemetry.promptMeta.promptVersion,
+            rule_version: RULE_VERSION,
+            used_fallback: usedFallback || agentFallbackApplied,
+            env: process.env.NODE_ENV,
+          },
+          {
+            agent_mode: env.INTELLIGENCE_AGENT_MODE,
+            lock_wait_ms: params.lockWaitMs,
+            idempotency_reused: params.idempotencyReused,
+            primary_model: loopDiagnostics?.primaryModel,
+            fallback_model: loopDiagnostics?.fallbackModel,
+            final_model: loopDiagnostics?.finalModel,
+            loop_rounds: loopDiagnostics?.roundsExecuted,
+            tool_call_count:
+              loopDiagnostics?.toolCallCount ?? toolExecutions.length,
+            tool_calls_by_name: loopDiagnostics?.toolCallsByName ?? {},
+            loop_unknown_tool_count: loopDiagnostics?.unknownToolCount ?? 0,
+            loop_arg_parse_failure_count:
+              loopDiagnostics?.argParseFailureCount ?? 0,
+            loop_round_limit_hit: loopDiagnostics?.roundLimitHit ?? false,
+            loop_tool_call_limit_hit:
+              loopDiagnostics?.toolCallLimitHit ?? false,
+            loop_empty_final_content:
+              loopDiagnostics?.emptyFinalContent ?? false,
+            parse_ok: agentOutputForTelemetry.diagnostics.parseOk,
+            repair_attempted:
+              agentOutputForTelemetry.diagnostics.repairAttempted,
+            repair_ok: agentOutputForTelemetry.diagnostics.repairOk,
+            policy_caps_applied: agentOutputForTelemetry.policyCapsApplied,
+            failure_stage: agentOutputForTelemetry.failureStage,
+            failure_code: agentOutputForTelemetry.failureCode,
+            fallback_applied: agentFallbackApplied,
+            fallback_reason: agentFallbackReason,
+            fallback_repair_failure_reason: agentFallbackRepairFailureReason,
+            source_status_weather: sourceStatusMap.weather.status,
+            source_status_events: sourceStatusMap.events.status,
+            source_status_closures: sourceStatusMap.closures.status,
+            source_status_doe: sourceStatusMap.doe.status,
+            source_status_reviews: sourceStatusMap.reviews.status,
+          },
+          {
+            level:
+              usedFallback ||
+              agentFallbackApplied ||
+              agentOutputForTelemetry.degraded
+                ? "warn"
+                : "info",
+          },
+        );
+      },
+    );
+  }
+
   return {
     sessionId,
     turnIndex,
@@ -1450,7 +1779,7 @@ export async function runFirstInsight(
       );
     }
 
-    const run = async () =>
+    const run = async (idempotencyReused: boolean) =>
       runFirstInsightUnlocked(
         ctx,
         {
@@ -1459,15 +1788,17 @@ export async function runFirstInsight(
         },
         {
           startedMs,
+          lockWaitMs,
+          idempotencyReused,
         },
       );
 
     if (!input.idempotencyKey) {
-      return run();
+      return run(false);
     }
 
     const key = `${sessionId}:${input.idempotencyKey}`;
-    const { reused, value } = await runIdempotent(key, run);
+    const { reused, value } = await runIdempotent(key, () => run(false));
     if (reused) {
       await emitEvent(
         {

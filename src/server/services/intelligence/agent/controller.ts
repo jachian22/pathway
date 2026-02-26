@@ -12,6 +12,7 @@ import { parseAgentResponse } from "@/server/services/intelligence/agent/schema"
 import { createAgentTools } from "@/server/services/intelligence/agent/tools";
 import {
   type ToolExecution,
+  type ToolLoopDiagnostics,
   chatCompletion,
   chatCompletionWithTools,
 } from "@/server/services/openrouter";
@@ -48,6 +49,27 @@ interface Snapshot {
   sampleReviewCount: number;
   recencyWindowDays: number;
   confidence: "low" | "medium" | "high";
+}
+
+export type AgentFailureStage =
+  | "provider"
+  | "tool_loop"
+  | "schema_parse"
+  | "repair"
+  | "policy"
+  | "none";
+
+export interface AgentPhaseTelemetry {
+  phase:
+    | "prefetch_core"
+    | "llm_tool_loop"
+    | "schema_parse"
+    | "repair"
+    | "policy";
+  status: "ok" | "error";
+  durationMs: number;
+  failureStage?: AgentFailureStage;
+  failureCode?: string;
 }
 
 export interface AgentTurnOutput {
@@ -91,6 +113,77 @@ export interface AgentTurnOutput {
     state: "open";
     failureCount: number;
   }[];
+  degraded: boolean;
+  failureReason?: string;
+  repairFailureReason?: string;
+  failureStage: AgentFailureStage;
+  failureCode?: string;
+  diagnostics: {
+    parseOk: boolean;
+    repairAttempted: boolean;
+    repairOk: boolean;
+    toolLoop?: ToolLoopDiagnostics;
+  };
+  phaseTelemetry: AgentPhaseTelemetry[];
+}
+
+function inferFailureCode(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "unknown_error";
+  const isZodError = error instanceof Error && error.name === "ZodError";
+  if (message.includes("AGENT_TOOL_CALL_LIMIT_REACHED")) {
+    return "AGENT_TOOL_CALL_LIMIT_REACHED";
+  }
+  if (message.includes("AGENT_TOOL_ROUND_LIMIT_REACHED")) {
+    return "AGENT_TOOL_ROUND_LIMIT_REACHED";
+  }
+  if (message.includes("AGENT_RESPONSE_NO_JSON")) {
+    return "AGENT_RESPONSE_NO_JSON";
+  }
+  if (message.includes("Unexpected token")) {
+    return "AGENT_RESPONSE_INVALID_JSON";
+  }
+  if (message.includes("ZodError") || isZodError) {
+    return "AGENT_RESPONSE_SCHEMA_INVALID";
+  }
+  if (message.includes("OpenRouter API error")) {
+    return "OPENROUTER_ERROR";
+  }
+  return "AGENT_UNKNOWN_ERROR";
+}
+
+function inferFailureStage(error: unknown): AgentFailureStage {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "unknown_error";
+  const isZodError = error instanceof Error && error.name === "ZodError";
+  if (
+    message.includes("AGENT_TOOL_CALL_LIMIT_REACHED") ||
+    message.includes("AGENT_TOOL_ROUND_LIMIT_REACHED")
+  ) {
+    return "tool_loop";
+  }
+  if (message.includes("AGENT_RESPONSE_NO_JSON")) {
+    return "schema_parse";
+  }
+  if (
+    message.includes("Unexpected token") ||
+    message.includes("ZodError") ||
+    isZodError
+  ) {
+    return "schema_parse";
+  }
+  if (message.includes("OpenRouter API error")) {
+    return "provider";
+  }
+  return "provider";
 }
 
 function mapCardIntro(cardType: CardType): string {
@@ -258,7 +351,15 @@ export async function runAgentTurn(
     competitor: input.competitor,
   });
 
+  const phaseTelemetry: AgentPhaseTelemetry[] = [];
+  const prefetchStartedAtMs = Date.now();
   const prefetchExecutions = await tools.prefetchCore();
+  phaseTelemetry.push({
+    phase: "prefetch_core",
+    status: "ok",
+    durationMs: Date.now() - prefetchStartedAtMs,
+  });
+
   const systemPrompt = [
     AGENT_IDENTITY_PROMPT,
     AGENT_TOOL_POLICY_PROMPT,
@@ -279,9 +380,20 @@ export async function runAgentTurn(
   ].join("\n");
 
   let toolExecutions: ToolExecution[] = prefetchExecutions;
-  let parsed: AgentResponse;
+  let parsed: AgentResponse | null = null;
+  let toolLoopDiagnostics: ToolLoopDiagnostics | undefined;
   let rawContent = "";
+  let degraded = false;
+  let failureReason: string | undefined;
+  let repairFailureReason: string | undefined;
+  let failureStage: AgentFailureStage = "none";
+  let failureCode: string | undefined;
+  let parseOk = false;
+  let repairAttempted = false;
+  let repairOk = false;
 
+  const llmLoopStartedAtMs = Date.now();
+  let llmLoopError: unknown;
   try {
     const response = await chatCompletionWithTools({
       messages: [
@@ -298,11 +410,57 @@ export async function runAgentTurn(
       },
     });
     toolExecutions = [...prefetchExecutions, ...response.toolExecutions];
+    toolLoopDiagnostics = response.diagnostics;
     rawContent = response.content;
-    parsed = parseAgentResponse(rawContent);
+    phaseTelemetry.push({
+      phase: "llm_tool_loop",
+      status: "ok",
+      durationMs: Date.now() - llmLoopStartedAtMs,
+    });
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown_error";
+    llmLoopError = error;
+    failureReason = error instanceof Error ? error.message : "unknown_error";
+    failureCode = inferFailureCode(error);
+    failureStage = inferFailureStage(error);
+    phaseTelemetry.push({
+      phase: "llm_tool_loop",
+      status: "error",
+      durationMs: Date.now() - llmLoopStartedAtMs,
+      failureStage,
+      failureCode,
+    });
+  }
 
+  if (!llmLoopError) {
+    const parseStartedAtMs = Date.now();
+    try {
+      parsed = parseAgentResponse(rawContent);
+      parseOk = true;
+      phaseTelemetry.push({
+        phase: "schema_parse",
+        status: "ok",
+        durationMs: Date.now() - parseStartedAtMs,
+      });
+    } catch (error) {
+      llmLoopError = error;
+      failureReason = error instanceof Error ? error.message : "unknown_error";
+      failureCode = inferFailureCode(error);
+      failureStage = "schema_parse";
+      phaseTelemetry.push({
+        phase: "schema_parse",
+        status: "error",
+        durationMs: Date.now() - parseStartedAtMs,
+        failureStage,
+        failureCode,
+      });
+    }
+  }
+
+  if (llmLoopError) {
+    repairAttempted = true;
+    const repairStartedAtMs = Date.now();
+    const reason =
+      llmLoopError instanceof Error ? llmLoopError.message : "unknown_error";
     try {
       const repaired = await chatCompletion(
         [
@@ -321,7 +479,28 @@ export async function runAgentTurn(
         },
       );
       parsed = parseAgentResponse(repaired);
-    } catch {
+      parseOk = true;
+      repairOk = true;
+      phaseTelemetry.push({
+        phase: "repair",
+        status: "ok",
+        durationMs: Date.now() - repairStartedAtMs,
+      });
+    } catch (repairError) {
+      degraded = true;
+      repairFailureReason =
+        repairError instanceof Error
+          ? repairError.message
+          : "unknown_repair_error";
+      failureCode ??= inferFailureCode(repairError);
+      failureStage = "repair";
+      phaseTelemetry.push({
+        phase: "repair",
+        status: "error",
+        durationMs: Date.now() - repairStartedAtMs,
+        failureStage,
+        failureCode,
+      });
       parsed = {
         narrative:
           "Live model synthesis is temporarily unavailable, so I am using a conservative operating fallback.",
@@ -356,13 +535,47 @@ export async function runAgentTurn(
 
   const reviewSignals = tools.getReviewSignals();
   const sourceStatuses = tools.getSourceStatuses();
-  const policyApplied = applyAgentPolicy({
-    parsed,
-    sourceStatusByName: sourceStatuses,
-    firstLocationLabel,
-    baselineAssumedForFirstLocation: input.baselineAssumedForFirstLocation,
-    reviewByLocation: reviewSignals.byLocation,
-  });
+  const policyStartedAtMs = Date.now();
+  let policyApplied: ReturnType<typeof applyAgentPolicy>;
+  try {
+    policyApplied = applyAgentPolicy({
+      parsed: parsed ?? {
+        narrative: "Conservative fallback due to missing model output.",
+        recommendations: [],
+        assumptions: [],
+      },
+      sourceStatusByName: sourceStatuses,
+      firstLocationLabel,
+      baselineAssumedForFirstLocation: input.baselineAssumedForFirstLocation,
+      reviewByLocation: reviewSignals.byLocation,
+    });
+    phaseTelemetry.push({
+      phase: "policy",
+      status: "ok",
+      durationMs: Date.now() - policyStartedAtMs,
+    });
+  } catch (error) {
+    degraded = true;
+    failureStage = "policy";
+    failureCode = "AGENT_POLICY_ERROR";
+    failureReason = error instanceof Error ? error.message : "unknown_error";
+    phaseTelemetry.push({
+      phase: "policy",
+      status: "error",
+      durationMs: Date.now() - policyStartedAtMs,
+      failureStage,
+      failureCode,
+    });
+    policyApplied = {
+      recommendations: [
+        fallbackRecommendation(firstLocationLabel ?? "your locations"),
+      ],
+      assumptions: [
+        "Fallback applied because response policy enforcement failed.",
+      ],
+      policyCapsApplied: true,
+    };
+  }
 
   const recommendations =
     policyApplied.recommendations.length > 0
@@ -374,7 +587,9 @@ export async function runAgentTurn(
     reviewSignals.competitorReview,
   );
   const message = buildMessage({
-    narrative: parsed.narrative,
+    narrative:
+      parsed?.narrative ??
+      "Live model synthesis is temporarily unavailable, so I am using a conservative operating fallback.",
     recommendations,
     followUpQuestion: policyApplied.followUpQuestion,
     competitorSnapshot,
@@ -400,5 +615,17 @@ export async function runAgentTurn(
       policyVersion: context.policyVersion,
     },
     circuitBreakerEvents: tools.getCircuitBreakerEvents(),
+    degraded,
+    failureReason,
+    repairFailureReason,
+    failureStage,
+    failureCode,
+    diagnostics: {
+      parseOk,
+      repairAttempted,
+      repairOk,
+      toolLoop: toolLoopDiagnostics,
+    },
+    phaseTelemetry,
   };
 }
