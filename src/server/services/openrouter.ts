@@ -98,6 +98,10 @@ export interface ToolLoopModelAttempt {
   finishReason?: string;
   hasToolCalls?: boolean;
   errorCode?: string;
+  attemptLatencyMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 }
 
 export interface ToolLoopProviderFailure {
@@ -111,6 +115,7 @@ export interface ToolLoopDiagnostics {
   primaryModel: string;
   fallbackModel?: string;
   finalModel?: string;
+  finalFinishReason?: string;
   roundsExecuted: number;
   toolCallCount: number;
   toolCallsByName: Record<string, number>;
@@ -119,6 +124,9 @@ export interface ToolLoopDiagnostics {
   roundLimitHit: boolean;
   toolCallLimitHit: boolean;
   emptyFinalContent: boolean;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
   modelAttempts: ToolLoopModelAttempt[];
   providerFailures: ToolLoopProviderFailure[];
 }
@@ -424,6 +432,7 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
     primaryModel,
     fallbackModel,
     roundsExecuted: 0,
+    finalFinishReason: undefined,
     toolCallCount: 0,
     toolCallsByName: {},
     unknownToolCount: 0,
@@ -431,6 +440,9 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
     roundLimitHit: false,
     toolCallLimitHit: false,
     emptyFinalContent: false,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
     modelAttempts: [],
     providerFailures: [],
   };
@@ -454,6 +466,7 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
         : params.options?.timeoutMs;
 
     diagnostics.roundsExecuted = round + 1;
+    const attemptStartedAtMs = Date.now();
     const result = await requestChatCompletion(
       messages,
       currentModel,
@@ -470,6 +483,7 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
         statusCode: result.failure.status,
         retryable: result.failure.retryable,
         errorCode: failureCode,
+        attemptLatencyMs: Date.now() - attemptStartedAtMs,
       });
       diagnostics.providerFailures.push({
         model: currentModel,
@@ -499,6 +513,13 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
 
     const message = result.data?.choices[0]?.message;
     const finishReason = result.data?.choices[0]?.finish_reason;
+    const usage = result.data?.usage;
+    const promptTokens = usage?.prompt_tokens ?? 0;
+    const completionTokens = usage?.completion_tokens ?? 0;
+    const totalTokens = usage?.total_tokens ?? 0;
+    diagnostics.promptTokens += promptTokens;
+    diagnostics.completionTokens += completionTokens;
+    diagnostics.totalTokens += totalTokens;
     if (!message) {
       throw new ToolLoopError(
         "OpenRouter API error: missing response message",
@@ -513,6 +534,10 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
       status: "ok",
       finishReason: finishReason ?? undefined,
       hasToolCalls: toolCalls.length > 0,
+      attemptLatencyMs: Date.now() - attemptStartedAtMs,
+      promptTokens,
+      completionTokens,
+      totalTokens,
     });
     if (toolCalls.length === 0) {
       if (!message.content) {
@@ -523,6 +548,7 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
         );
       }
       diagnostics.finalModel = currentModel;
+      diagnostics.finalFinishReason = finishReason ?? undefined;
       return {
         content: message.content,
         toolExecutions,

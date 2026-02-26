@@ -120,8 +120,28 @@ function parseCompetitorInput(rawValue: string): {
 
 function looksLikeDecline(message: string): boolean {
   const normalized = message.trim().toLowerCase();
-  return /^(no|nope|nah|all set|looks good|looks great|we['’]?re good|that works|no thanks|not now)[.!?]*$/.test(
-    normalized,
+  if (
+    /^(no|nope|nah|all set|looks good|looks great|we['’]?re good|that works|no thanks|not now)[.!?]*$/.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    normalized.startsWith("no ") ||
+    normalized.includes("no change") ||
+    normalized.includes("no changes") ||
+    normalized.includes("no adjustment") ||
+    normalized.includes("no adjustments") ||
+    normalized.includes("keep as is") ||
+    normalized.includes("leave as is") ||
+    normalized.includes("keep it as is") ||
+    normalized.includes("keep same") ||
+    normalized.includes("stay the same") ||
+    normalized.includes("don't adjust") ||
+    normalized.includes("do not adjust") ||
+    normalized.includes("not changing")
   );
 }
 

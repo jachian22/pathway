@@ -1,3 +1,4 @@
+import { env } from "@/env";
 import { type DbClient } from "@/server/db";
 import { buildCompiledAgentContext } from "@/server/services/intelligence/agent/context";
 import { applyAgentPolicy } from "@/server/services/intelligence/agent/policy";
@@ -136,7 +137,6 @@ export interface AgentTurnOutput {
   phaseTelemetry: AgentPhaseTelemetry[];
 }
 
-const TURN_BUDGET_MS = 4500;
 const MAX_REPAIR_TIMEOUT_MS = 1200;
 const MIN_REPAIR_BUDGET_MS = 300;
 
@@ -384,7 +384,14 @@ export async function runAgentTurn(
   });
 
   const turnStartedAtMs = Date.now();
-  const turnDeadlineMs = turnStartedAtMs + TURN_BUDGET_MS;
+  const turnDeadlineMs = turnStartedAtMs + env.INTELLIGENCE_TURN_BUDGET_MS;
+  const isFirstTurn = input.turnIndex <= 1;
+  const maxTokensForTurn = isFirstTurn
+    ? env.INTELLIGENCE_AGENT_MAX_TOKENS_FIRST_TURN
+    : env.INTELLIGENCE_AGENT_MAX_TOKENS_FOLLOWUP;
+  const modelOverride = isFirstTurn
+    ? (env.OPENROUTER_FAST_MODEL ?? undefined)
+    : undefined;
   const phaseTelemetry: AgentPhaseTelemetry[] = [];
   const prefetchStartedAtMs = Date.now();
   const prefetchExecutions = await tools.prefetchCore();
@@ -404,12 +411,9 @@ export async function runAgentTurn(
     AGENT_IDENTITY_PROMPT,
     AGENT_TOOL_POLICY_PROMPT,
     AGENT_OUTPUT_PROMPT,
-    `Prompt version: ${context.promptVersion}`,
-    `Tool contract version: ${context.toolContractVersion}`,
-    `Policy version: ${context.policyVersion}`,
-    `Identity context:\n${context.identityContext}`,
-    `Tool contract context:\n${context.toolContractContext}`,
-    `Session memory context:\n${context.sessionMemoryContext}`,
+    `Context: ${context.identityContext}`,
+    `Limits: ${context.toolContractContext}`,
+    `Memory: ${context.sessionMemoryContext}`,
   ].join("\n\n");
 
   const userPrompt = [
@@ -448,8 +452,9 @@ export async function runAgentTurn(
       maxToolCalls: 8,
       deadlineMs: turnDeadlineMs,
       options: {
+        model: modelOverride,
         temperature: 0.2,
-        maxTokens: 1200,
+        maxTokens: maxTokensForTurn,
       },
     });
     toolExecutions = [...prefetchExecutions, ...response.toolExecutions];
@@ -540,7 +545,7 @@ export async function runAgentTurn(
           ],
           {
             temperature: 0.1,
-            maxTokens: 1200,
+            maxTokens: env.INTELLIGENCE_AGENT_MAX_TOKENS_REPAIR,
             timeoutMs: Math.min(budgetLeftForRepairMs, MAX_REPAIR_TIMEOUT_MS),
           },
         );

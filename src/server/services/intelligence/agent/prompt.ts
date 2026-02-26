@@ -13,7 +13,7 @@ Keep tool usage bounded and relevant to the user's request.
 export const AGENT_OUTPUT_PROMPT = `
 Return ONLY valid JSON matching this shape:
 {
-  "narrative": "short conversational summary",
+  "narrative": "max 2 short sentences, <= 45 words",
   "recommendations": [
     {
       "locationLabel": "string",
@@ -35,8 +35,12 @@ Return ONLY valid JSON matching this shape:
     }
   ],
   "assumptions": ["string"],
-  "followUpQuestion": "optional string"
+  "followUpQuestion": "optional short question <= 16 words"
 }
+Rules:
+- Keep recommendations to 1-3 items.
+- Keep why bullets concise and concrete.
+- Do not repeat details that already appear in action cards.
 `.trim();
 
 export const AGENT_REPAIR_PROMPT = `

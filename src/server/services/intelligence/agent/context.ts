@@ -1,3 +1,4 @@
+import { env } from "@/env";
 import {
   AGENT_POLICY_VERSION,
   AGENT_PROMPT_VERSION,
@@ -37,21 +38,17 @@ export function buildSessionMemoryContext(input: AgentMemoryInput): string {
       !input.baselineByLocation.has(location.label),
   }));
 
-  return JSON.stringify(
-    {
-      sessionId: input.sessionId,
-      turnIndex: input.turnIndex,
-      cardType: input.cardType,
-      locations: input.locations.map((location) => ({
-        label: location.label,
-        placeId: location.placeId,
-      })),
-      baselines,
-      competitorName: input.competitorName ?? null,
-    },
-    null,
-    2,
-  );
+  return JSON.stringify({
+    sessionId: input.sessionId,
+    turnIndex: input.turnIndex,
+    cardType: input.cardType,
+    locations: input.locations.map((location) => ({
+      label: location.label,
+      placeId: location.placeId,
+    })),
+    baselines,
+    competitorName: input.competitorName ?? null,
+  });
 }
 
 export function buildCompiledAgentContext(
@@ -60,8 +57,7 @@ export function buildCompiledAgentContext(
   return {
     identityContext:
       "Mission: provide concrete staffing/prep recommendations for NYC restaurants over next 3 days.",
-    toolContractContext:
-      "Hard limits: max 8 tool calls, max 2 rounds, max 4500ms turn budget, no fabricated claims.",
+    toolContractContext: `Hard limits: max 8 tool calls, max 2 rounds, max ${env.INTELLIGENCE_TURN_BUDGET_MS}ms turn budget, no fabricated claims.`,
     sessionMemoryContext: buildSessionMemoryContext(input),
     promptVersion: AGENT_PROMPT_VERSION,
     toolContractVersion: AGENT_TOOL_CONTRACT_VERSION,

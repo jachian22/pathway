@@ -146,6 +146,7 @@ function buildMessage(output: {
   summary: string;
   recommendations: Recommendation[];
   competitorSnapshot?: FirstInsightOutput["competitorSnapshot"];
+  followUpPrompt?: string;
 }): string {
   const summaryHeadline = output.summary.split("\n")[0]?.trim();
   const headline =
@@ -180,7 +181,8 @@ function buildMessage(output: {
   if (output.recommendations.length > 0) {
     lines.push(
       "",
-      "Want to adjust any of these based on your current staffing?",
+      output.followUpPrompt ??
+        "Want to adjust any of these based on your current staffing?",
     );
   }
 
@@ -306,7 +308,7 @@ async function resolveCompetitor(
     return {
       status: "limit_reached",
       snapshot:
-        "Competitor check already used in this session (v1.1 limit is one).",
+        "Already used in this session. You can run one competitor check per chat.",
     };
   }
 
@@ -1082,6 +1084,14 @@ async function runFirstInsightUnlocked(
             repair_ok: agentOutput.diagnostics.repairOk,
             loop_rounds:
               agentOutput.diagnostics.toolLoop?.roundsExecuted ?? undefined,
+            loop_final_finish_reason:
+              agentOutput.diagnostics.toolLoop?.finalFinishReason,
+            loop_prompt_tokens:
+              agentOutput.diagnostics.toolLoop?.promptTokens ?? undefined,
+            loop_completion_tokens:
+              agentOutput.diagnostics.toolLoop?.completionTokens ?? undefined,
+            loop_total_tokens:
+              agentOutput.diagnostics.toolLoop?.totalTokens ?? undefined,
             loop_tool_call_limit_hit:
               agentOutput.diagnostics.toolLoop?.toolCallLimitHit ?? false,
             loop_round_limit_hit:
@@ -1150,6 +1160,10 @@ async function runFirstInsightUnlocked(
               finish_reason: attempt.finishReason,
               has_tool_calls: attempt.hasToolCalls,
               failure_code: attempt.errorCode,
+              attempt_latency_ms: attempt.attemptLatencyMs,
+              prompt_tokens: attempt.promptTokens,
+              completion_tokens: attempt.completionTokens,
+              total_tokens: attempt.totalTokens,
             },
             { level: attempt.status === "ok" ? "info" : "warn" },
           );
@@ -1329,10 +1343,17 @@ async function runFirstInsightUnlocked(
         },
       );
 
+      const fallbackFollowUpPrompt = agentFallbackReason?.includes(
+        "AGENT_TURN_BUDGET_EXCEEDED",
+      )
+        ? "I hit a timing cap while generating this pass. Want me to retry now with the same locations?"
+        : undefined;
+
       messageText = buildMessage({
         summary: recommendationOutput.summary,
         recommendations: recommendationOutput.recommendations,
         competitorSnapshot: competitorSnapshotForUi,
+        followUpPrompt: fallbackFollowUpPrompt,
       });
 
       sourceEntries = [
@@ -1681,6 +1702,14 @@ async function runFirstInsightUnlocked(
             agentOutputForTelemetry?.diagnostics.prefetchToolCallCount,
           loop_tool_call_count:
             agentOutputForTelemetry?.diagnostics.loopToolCallCount,
+          loop_final_finish_reason:
+            agentOutputForTelemetry?.diagnostics.toolLoop?.finalFinishReason,
+          loop_prompt_tokens:
+            agentOutputForTelemetry?.diagnostics.toolLoop?.promptTokens,
+          loop_completion_tokens:
+            agentOutputForTelemetry?.diagnostics.toolLoop?.completionTokens,
+          loop_total_tokens:
+            agentOutputForTelemetry?.diagnostics.toolLoop?.totalTokens,
           review_backed_recommendation_count:
             recommendationOutput.recommendations.filter(
               (rec) => rec.reviewBacked,
@@ -1740,7 +1769,11 @@ async function runFirstInsightUnlocked(
             primary_model: loopDiagnostics?.primaryModel,
             fallback_model: loopDiagnostics?.fallbackModel,
             final_model: loopDiagnostics?.finalModel,
+            final_finish_reason: loopDiagnostics?.finalFinishReason,
             loop_rounds: loopDiagnostics?.roundsExecuted,
+            loop_prompt_tokens: loopDiagnostics?.promptTokens,
+            loop_completion_tokens: loopDiagnostics?.completionTokens,
+            loop_total_tokens: loopDiagnostics?.totalTokens,
             tool_call_count:
               agentOutputForTelemetry.diagnostics.prefetchToolCallCount +
               agentOutputForTelemetry.diagnostics.loopToolCallCount,

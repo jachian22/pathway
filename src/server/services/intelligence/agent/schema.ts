@@ -12,23 +12,24 @@ export const AgentSourceNameSchema = z.enum([
 export const AgentConfidenceSchema = z.enum(["low", "medium", "high"]);
 
 export const AgentRecommendationSchema = z.object({
-  locationLabel: z.string().min(1),
-  action: z.string().min(1),
-  timeWindow: z.string().min(1),
+  locationLabel: z.string().min(1).max(120),
+  action: z.string().min(1).max(180),
+  timeWindow: z.string().min(1).max(80),
   confidence: AgentConfidenceSchema,
   sourceName: AgentSourceNameSchema,
-  why: z.array(z.string().min(1)).max(3).default([]),
-  deltaReasoning: z.string().min(1),
-  escalationTrigger: z.string().min(1),
+  why: z.array(z.string().min(1).max(160)).max(2).default([]),
+  deltaReasoning: z.string().min(1).max(240),
+  escalationTrigger: z.string().min(1).max(200),
   reviewBacked: z.boolean().default(false),
   citations: z
     .array(
       z.object({
         sourceName: AgentSourceNameSchema,
         freshnessSeconds: z.number().int().nonnegative().optional(),
-        note: z.string().optional(),
+        note: z.string().max(120).optional(),
       }),
     )
+    .max(3)
     .default([]),
   evidence: z
     .object({
@@ -56,10 +57,10 @@ export const AgentRecommendationSchema = z.object({
 });
 
 export const AgentResponseSchema = z.object({
-  narrative: z.string().min(1),
-  recommendations: z.array(AgentRecommendationSchema).min(1),
-  assumptions: z.array(z.string().min(1)).default([]),
-  followUpQuestion: z.string().min(1).optional(),
+  narrative: z.string().min(1).max(360),
+  recommendations: z.array(AgentRecommendationSchema).min(1).max(3),
+  assumptions: z.array(z.string().min(1).max(180)).max(4).default([]),
+  followUpQuestion: z.string().min(1).max(140).optional(),
 });
 
 export type AgentRecommendation = z.infer<typeof AgentRecommendationSchema>;
