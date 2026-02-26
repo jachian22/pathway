@@ -3,12 +3,18 @@ import {
   type AgentResponse,
 } from "@/server/services/intelligence/agent/schema";
 import {
+  defaultFollowUpByCard,
+  rankRecommendationsByCardProfile,
+} from "@/server/services/intelligence/agent/card-profile";
+import {
   type Recommendation,
+  type CardType,
   type ReviewSignals,
   type SourceStatus,
 } from "@/server/services/intelligence/types";
 
 interface PolicyInput {
+  cardType: CardType;
   parsed: AgentResponse;
   sourceStatusByName: Record<
     "weather" | "events" | "closures" | "doe" | "reviews",
@@ -137,10 +143,16 @@ export function applyAgentPolicy(input: PolicyInput): {
     },
   );
 
-  return {
+  const rankedRecommendations = rankRecommendationsByCardProfile(
+    input.cardType,
     recommendations,
+  );
+
+  return {
+    recommendations: rankedRecommendations,
     assumptions,
-    followUpQuestion: input.parsed.followUpQuestion,
+    followUpQuestion:
+      input.parsed.followUpQuestion ?? defaultFollowUpByCard(input.cardType),
     policyCapsApplied,
   };
 }

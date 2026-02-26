@@ -465,6 +465,33 @@ Scope: Chat agent architecture and execution policy for Restaurant Intelligence
 - Revisit when:
   - Shadow mode is implemented and we can compare two-stage vs loop-only quality/latency at scale.
 
+## ADR-024: Card profiles must alter execution behavior (not just phrasing)
+
+- Status: Accepted
+- Decision:
+  - Keep one shared agent, but apply deterministic per-card profiles for:
+    - prefetch policy
+    - recommendation ranking
+    - default follow-up style
+  - v1.2.3 profile defaults:
+    - `staffing`: prefetch `reviews`; rank `events/reviews` highest.
+    - `risk`: prefetch `doe`; rank `closures/weather` highest.
+    - `opportunity`: prefetch competitor reviews only when competitor is resolved; rank `events` highest.
+- Why:
+  - Prompt-only card labels were producing near-identical outputs.
+  - Distinct profile behavior creates real product differentiation with stable guardrails.
+- Alternatives considered:
+  - Keep all cards identical and vary only narrative tone.
+  - Separate agents per card.
+- Tradeoffs:
+  - More policy surface area to tune and evaluate.
+  - Slightly more complexity in telemetry interpretation.
+- Guardrails:
+  - Keep shared output schema and safety caps.
+  - Allow tool overlap in follow-up turns when user asks deeper questions.
+- Revisit when:
+  - User feedback suggests profile weighting or prefetch policy needs retuning.
+
 ## Open Questions (Next Design Session)
 
 1. Persona-specific variants after default balanced mode is stable (owner vs ops manager).

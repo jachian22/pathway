@@ -18,8 +18,10 @@ import {
   type SourceStatus,
   type VenueEventSignal,
   type WeatherSignal,
+  type CardType,
 } from "@/server/services/intelligence/types";
 import { TurnCircuitBreaker } from "@/server/services/intelligence/agent/circuit-breaker";
+import { getCardProfile } from "@/server/services/intelligence/agent/card-profile";
 
 interface CompetitorContext {
   placeId?: string;
@@ -29,6 +31,7 @@ interface CompetitorContext {
 
 interface CreateAgentToolsInput {
   db: DbClient;
+  cardType: CardType;
   resolvedLocations: ResolvedLocation[];
   competitor: CompetitorContext;
 }
@@ -94,6 +97,7 @@ export function createAgentTools(input: CreateAgentToolsInput): {
   getCircuitBreakerEvents: () => ReturnType<TurnCircuitBreaker["getEvents"]>;
 } {
   const circuitBreaker = new TurnCircuitBreaker(1);
+  const cardProfile = getCardProfile(input.cardType);
   const state: SourceState = {};
 
   const sourceStatuses: SourceStatusMap = {
@@ -407,11 +411,21 @@ export function createAgentTools(input: CreateAgentToolsInput): {
       executeTool({ name: "get_weather", args: {} }),
       executeTool({ name: "get_events", args: {} }),
       executeTool({ name: "get_closures", args: {} }),
-      executeTool({ name: "get_doe", args: {} }),
-      executeTool({ name: "get_reviews", args: {} }),
     ];
 
-    if (input.competitor.status === "resolved" && input.competitor.placeId) {
+    if (cardProfile.prefetch.doe) {
+      baseCalls.push(executeTool({ name: "get_doe", args: {} }));
+    }
+
+    if (cardProfile.prefetch.reviews) {
+      baseCalls.push(executeTool({ name: "get_reviews", args: {} }));
+    }
+
+    if (
+      cardProfile.prefetch.competitor &&
+      input.competitor.status === "resolved" &&
+      input.competitor.placeId
+    ) {
       baseCalls.push(executeTool({ name: "get_competitor_reviews", args: {} }));
     }
 

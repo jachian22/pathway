@@ -1,5 +1,6 @@
 import { env } from "@/env";
 import { type DbClient } from "@/server/db";
+import { getCardProfile } from "@/server/services/intelligence/agent/card-profile";
 import { buildCompiledAgentContext } from "@/server/services/intelligence/agent/context";
 import { applyAgentPolicy } from "@/server/services/intelligence/agent/policy";
 import {
@@ -643,9 +644,11 @@ export async function runAgentTurn(
     competitorName: input.competitorName,
     baselineAssumedForFirstLocation: input.baselineAssumedForFirstLocation,
   });
+  const cardProfile = getCardProfile(input.cardType);
 
   const tools = createAgentTools({
     db: input.db,
+    cardType: input.cardType,
     resolvedLocations: input.resolvedLocations,
     competitor: input.competitor,
   });
@@ -724,6 +727,7 @@ export async function runAgentTurn(
 
   const userPrompt = [
     `Card type: ${input.cardType}`,
+    `Profile objective: ${cardProfile.objective}`,
     `Location labels: ${input.resolvedLocations.map((location) => location.label).join(", ")}`,
     "Goal: produce staffing/prep recommendations for next 3 days with concrete action windows.",
     `Signal pack summary: ${signalPackSummary}`,
@@ -967,6 +971,7 @@ export async function runAgentTurn(
   let policyApplied: ReturnType<typeof applyAgentPolicy>;
   try {
     policyApplied = applyAgentPolicy({
+      cardType: input.cardType,
       parsed: parsed ?? {
         narrative: "Conservative fallback due to missing model output.",
         recommendations: [],
