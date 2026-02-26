@@ -46,6 +46,7 @@ export interface FirstInsightInput {
   distinctId?: string;
   idempotencyKey?: string;
   cardType: CardType;
+  responseModeHint?: "plan" | "refine";
   locations: string[];
   baselineContext?: BaselineContextInput[];
   competitorName?: string;
@@ -1101,6 +1102,7 @@ async function runFirstInsightUnlocked(
       sessionId,
       turnIndex,
       cardType: input.cardType,
+      responseModeHint: input.responseModeHint,
       resolvedLocations,
       baselineByLocation,
       baselineAssumedForFirstLocation: !baselineByLocation.has(
@@ -1162,6 +1164,8 @@ async function runFirstInsightUnlocked(
             prompt_version: agentOutput.promptMeta.promptVersion,
             tool_contract_version: agentOutput.promptMeta.toolContractVersion,
             policy_version: agentOutput.promptMeta.policyVersion,
+            response_mode_hint: input.responseModeHint,
+            response_mode_effective: agentOutput.responseMode,
             policy_caps_applied: agentOutput.policyCapsApplied,
             tool_call_count:
               agentOutput.diagnostics.prefetchToolCallCount +
@@ -1775,6 +1779,8 @@ async function runFirstInsightUnlocked(
           },
           {
             agent_mode: env.INTELLIGENCE_AGENT_MODE,
+            response_mode_hint: input.responseModeHint,
+            response_mode_effective: agentOutputForTelemetry.responseMode,
             lock_wait_ms: params.lockWaitMs,
             idempotency_reused: params.idempotencyReused,
             primary_model: loopDiagnostics?.primaryModel,

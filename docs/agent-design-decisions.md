@@ -551,6 +551,29 @@ Scope: Chat agent architecture and execution policy for Restaurant Intelligence
 - Revisit when:
   - Current production fallback/truncation issues are below threshold for two consecutive release cycles.
 
+## ADR-027: Intent-gated response modes backlog (post-stabilization)
+
+- Status: Backlog (defer until reliability baseline is stable)
+- Decision:
+  - Introduce intent-gated turn modes so the assistant does not regenerate full plan copy on every follow-up.
+  - Planned modes:
+    - `plan`: full recompute/render path for new plan requests.
+    - `refine`: delta-only updates when user adjusts baseline/assumptions.
+    - `evidence`: citation-first answers for "where did that come from?" questions.
+    - `clarify`: short disambiguation turns.
+  - Add explicit plan-regeneration gate:
+    - Regenerate full plan only when source delta or staffing baseline delta exceeds threshold.
+    - Otherwise return concise delta response without re-stating full event/weather block.
+- Why:
+  - Current flow can repeat heavy "plan-style" wording during conversational refinement turns.
+  - Reduces repeated narrative noise while preserving deterministic recommendation quality.
+- Guardrails:
+  - Keep deterministic recommendation engine as source of truth.
+  - Keep mode routing bounded and observable (`intent`, `response_mode`, `plan_regenerated`).
+  - Roll out behind a feature flag for rapid rollback.
+- Revisit when:
+  - Layered memory/context tactics (ADR-026) are implemented enough to support durable mode state cleanly.
+
 ## Open Questions (Next Design Session)
 
 1. Persona-specific variants after default balanced mode is stable (owner vs ops manager).

@@ -30,11 +30,14 @@ import {
   type SourceStatus,
 } from "@/server/services/intelligence/types";
 
+export type AgentResponseMode = "plan" | "refine";
+
 interface AgentTurnInput {
   db: DbClient;
   sessionId: string;
   turnIndex: number;
   cardType: CardType;
+  responseModeHint?: AgentResponseMode;
   resolvedLocations: ResolvedLocation[];
   baselineByLocation: Map<string, number>;
   baselineAssumedForFirstLocation: boolean;
@@ -71,6 +74,7 @@ export interface AgentPhaseTelemetry {
 }
 
 export interface AgentTurnOutput {
+  responseMode: AgentResponseMode;
   summary: string;
   message: string;
   recommendations: Recommendation[];
@@ -139,6 +143,7 @@ const SIGNAL_PACK_SUMMARY_TIMEOUT_MS = 400;
 const SIGNAL_PACK_SUMMARY_MAX_TOKENS = 220;
 const LLM_TOOL_LOOP_REQUEST_TIMEOUT_MS = 9000;
 const MIN_LOOP_BUDGET_AFTER_SUMMARY_MS = 1800;
+const REFINE_MODE_MAX_TOKENS = 420;
 
 interface SignalPackLocation {
   locationLabel: string;
@@ -565,6 +570,9 @@ export async function runAgentTurn(
 
   const turnStartedAtMs = Date.now();
   const isFirstTurn = input.turnIndex <= 1;
+  const responseMode: AgentResponseMode =
+    input.responseModeHint ?? (isFirstTurn ? "plan" : "refine");
+  const isRefineMode = responseMode === "refine";
   const turnBudgetMs = isFirstTurn
     ? env.INTELLIGENCE_TURN_BUDGET_FIRST_MS
     : env.INTELLIGENCE_TURN_BUDGET_FOLLOWUP_MS;
@@ -582,6 +590,9 @@ export async function runAgentTurn(
     maxTokensForTurn,
     env.INTELLIGENCE_AGENT_MAX_TOKENS_NARRATIVE_CAP,
   );
+  const maxTokensForMode = isRefineMode
+    ? Math.min(maxTokensForNarrative, REFINE_MODE_MAX_TOKENS)
+    : maxTokensForNarrative;
   const modelOverride = isFirstTurn
     ? (env.OPENROUTER_FAST_MODEL ?? undefined)
     : undefined;
@@ -612,18 +623,19 @@ export async function runAgentTurn(
   );
   let signalPackSummary = deterministicSignalPackSummary;
   const signalPackSummaryStartedAtMs = Date.now();
-  const summaryBudgetMs = isFirstTurn
-    ? Math.min(
-        SIGNAL_PACK_SUMMARY_TIMEOUT_MS,
-        Math.max(
-          0,
-          loopDeadlineMs -
-            Date.now() -
-            MIN_REPAIR_BUDGET_MS -
-            MIN_LOOP_BUDGET_AFTER_SUMMARY_MS,
-        ),
-      )
-    : 0;
+  const summaryBudgetMs =
+    !isRefineMode && isFirstTurn
+      ? Math.min(
+          SIGNAL_PACK_SUMMARY_TIMEOUT_MS,
+          Math.max(
+            0,
+            loopDeadlineMs -
+              Date.now() -
+              MIN_REPAIR_BUDGET_MS -
+              MIN_LOOP_BUDGET_AFTER_SUMMARY_MS,
+          ),
+        )
+      : 0;
   if (summaryBudgetMs >= 200) {
     try {
       signalPackSummary = await withLocalTimeout(
@@ -671,9 +683,13 @@ export async function runAgentTurn(
 
   const userPrompt = [
     `Card type: ${input.cardType}`,
+    `Response mode: ${responseMode}`,
     `Profile objective: ${cardProfile.objective}`,
     `Location labels: ${input.resolvedLocations.map((location) => location.label).join(", ")}`,
     "Goal: produce staffing/prep recommendations for next 3 days with concrete action windows.",
+    isRefineMode
+      ? "In refine mode, answer the immediate follow-up and avoid repeating unchanged top-action text."
+      : "In plan mode, prioritize net-new recommendations for the next 3 days.",
     "For timing language, tie certainty to source: weather=forecast windows, events=published schedule windows, closures=closure notice windows.",
     `Signal pack summary: ${signalPackSummary}`,
     "Core signals already fetched (weather/events/closures/doe/reviews). Do not re-fetch unless you need deeper evidence for a specific claim.",
@@ -709,6 +725,7 @@ export async function runAgentTurn(
           role: "user",
           content: [
             `Card type: ${input.cardType}`,
+            `Response mode: ${responseMode}`,
             `Locations: ${input.resolvedLocations.map((location) => location.label).join(", ")}`,
             `Reason for retry: ${reason}`,
             `Signal pack summary: ${refreshedSummary}`,
@@ -720,7 +737,7 @@ export async function runAgentTurn(
       {
         model: modelOverride,
         temperature: 0.1,
-        maxTokens: maxTokensForNarrative,
+        maxTokens: maxTokensForMode,
         timeoutMs,
         responseFormat: { type: "json_object" },
       },
@@ -759,7 +776,7 @@ export async function runAgentTurn(
       options: {
         model: modelOverride,
         temperature: 0.2,
-        maxTokens: maxTokensForNarrative,
+        maxTokens: maxTokensForMode,
         timeoutMs: Math.min(
           LLM_TOOL_LOOP_REQUEST_TIMEOUT_MS,
           Math.max(1, loopDeadlineMs - Date.now()),
@@ -977,6 +994,7 @@ export async function runAgentTurn(
   });
 
   return {
+    responseMode,
     summary: deterministicOutput.summary,
     message,
     recommendations,
