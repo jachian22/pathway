@@ -2,7 +2,7 @@ import { StaffingChat } from "@/app/_components/chat/staffing-chat";
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-surface-2">
+    <main className="bg-surface-2 min-h-screen">
       <StaffingChat />
     </main>
   );

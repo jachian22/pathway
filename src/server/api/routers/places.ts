@@ -17,7 +17,7 @@ export const placesRouter = createTRPCRouter({
         radius: z.number().optional(),
         type: z.string().optional(),
         maxResults: z.number().min(1).max(20).default(10),
-      })
+      }),
     )
     .query(async ({ input }) => {
       const location =
@@ -57,7 +57,7 @@ export const placesRouter = createTRPCRouter({
         radius: z.number().default(1000),
         type: z.string().optional(),
         maxResults: z.number().min(1).max(20).default(10),
-      })
+      }),
     )
     .query(async ({ input }) => {
       const places = await getNearbyPlaces({

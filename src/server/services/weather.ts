@@ -58,7 +58,7 @@ const BASE_URL = "https://api.openweathermap.org/data/2.5";
 export async function getCurrentWeather(
   lat: number,
   lon: number,
-  units: "metric" | "imperial" = "imperial"
+  units: "metric" | "imperial" = "imperial",
 ): Promise<CurrentWeatherResponse> {
   const url = `${BASE_URL}/weather?lat=${lat}&lon=${lon}&units=${units}&appid=${env.OPENWEATHER_API_KEY}`;
 
@@ -75,7 +75,7 @@ export async function getCurrentWeather(
 export async function getForecast(
   lat: number,
   lon: number,
-  units: "metric" | "imperial" = "imperial"
+  units: "metric" | "imperial" = "imperial",
 ): Promise<ForecastResponse> {
   const url = `${BASE_URL}/forecast?lat=${lat}&lon=${lon}&units=${units}&appid=${env.OPENWEATHER_API_KEY}`;
 
@@ -91,7 +91,7 @@ export async function getForecast(
 
 export async function getWeatherByCity(
   city: string,
-  units: "metric" | "imperial" = "imperial"
+  units: "metric" | "imperial" = "imperial",
 ): Promise<CurrentWeatherResponse> {
   const url = `${BASE_URL}/weather?q=${encodeURIComponent(city)}&units=${units}&appid=${env.OPENWEATHER_API_KEY}`;
 

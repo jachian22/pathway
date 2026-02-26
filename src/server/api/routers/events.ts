@@ -22,7 +22,7 @@ export const eventsRouter = createTRPCRouter({
         category: z.string().optional(),
         size: z.number().min(1).max(100).default(20),
         page: z.number().min(0).default(0),
-      })
+      }),
     )
     .query(async ({ input }) => {
       const latlong =
@@ -50,7 +50,9 @@ export const eventsRouter = createTRPCRouter({
           id: event.id,
           name: event.name,
           url: event.url,
-          image: event.images.find((img) => img.ratio === "16_9")?.url ?? event.images[0]?.url,
+          image:
+            event.images.find((img) => img.ratio === "16_9")?.url ??
+            event.images[0]?.url,
           date: event.dates.start.localDate,
           time: event.dates.start.localTime,
           status: event.dates.status?.code,
@@ -123,7 +125,7 @@ export const eventsRouter = createTRPCRouter({
         radius: z.number().optional(),
         size: z.number().min(1).max(100).default(20),
         page: z.number().min(0).default(0),
-      })
+      }),
     )
     .query(async ({ input }) => {
       const latlong =

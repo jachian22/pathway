@@ -10,11 +10,11 @@ export const aiRouter = createTRPCRouter({
           z.object({
             role: z.enum(["system", "user", "assistant"]),
             content: z.string(),
-          })
+          }),
         ),
         temperature: z.number().min(0).max(2).optional(),
         maxTokens: z.number().min(1).max(4096).optional(),
-      })
+      }),
     )
     .mutation(async ({ input }) => {
       const response = await chatCompletion(input.messages, {
@@ -31,7 +31,7 @@ export const aiRouter = createTRPCRouter({
       z.object({
         prompt: z.string(),
         systemPrompt: z.string().optional(),
-      })
+      }),
     )
     .mutation(async ({ input }) => {
       const messages: { role: "system" | "user"; content: string }[] = [];

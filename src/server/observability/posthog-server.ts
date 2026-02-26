@@ -9,7 +9,9 @@ interface PosthogCaptureParams {
 const defaultHost = env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://app.posthog.com";
 const projectKey = env.NEXT_PUBLIC_POSTHOG_KEY;
 
-export async function capturePosthogServer(params: PosthogCaptureParams): Promise<void> {
+export async function capturePosthogServer(
+  params: PosthogCaptureParams,
+): Promise<void> {
   if (!projectKey) return;
 
   try {

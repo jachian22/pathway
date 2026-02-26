@@ -13,10 +13,14 @@ export const weatherRouter = createTRPCRouter({
         lat: z.number(),
         lon: z.number(),
         units: z.enum(["metric", "imperial"]).default("imperial"),
-      })
+      }),
     )
     .query(async ({ input }) => {
-      const weather = await getCurrentWeather(input.lat, input.lon, input.units);
+      const weather = await getCurrentWeather(
+        input.lat,
+        input.lon,
+        input.units,
+      );
 
       return {
         location: weather.name,
@@ -38,7 +42,7 @@ export const weatherRouter = createTRPCRouter({
       z.object({
         city: z.string(),
         units: z.enum(["metric", "imperial"]).default("imperial"),
-      })
+      }),
     )
     .query(async ({ input }) => {
       const weather = await getWeatherByCity(input.city, input.units);
@@ -65,7 +69,7 @@ export const weatherRouter = createTRPCRouter({
         lat: z.number(),
         lon: z.number(),
         units: z.enum(["metric", "imperial"]).default("imperial"),
-      })
+      }),
     )
     .query(async ({ input }) => {
       const forecast = await getForecast(input.lat, input.lon, input.units);

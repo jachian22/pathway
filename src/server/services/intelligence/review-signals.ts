@@ -6,8 +6,14 @@ import {
   REVIEW_RECENCY_WINDOW_DAYS,
   SOURCE_TIMEOUTS_MS,
 } from "@/server/services/intelligence/constants";
-import { type ReviewEvidenceRef, type ReviewSignals } from "@/server/services/intelligence/types";
-import { truncateSnippet, withTimeout } from "@/server/services/intelligence/utils";
+import {
+  type ReviewEvidenceRef,
+  type ReviewSignals,
+} from "@/server/services/intelligence/types";
+import {
+  truncateSnippet,
+  withTimeout,
+} from "@/server/services/intelligence/utils";
 
 interface ReviewInput {
   name?: string;
@@ -19,13 +25,18 @@ interface ReviewInput {
 function classifyTheme(text: string): ReviewEvidenceRef["theme"] {
   const value = text.toLowerCase();
   if (/(wait|line|queued|queue|seated)/.test(value)) return "wait_time";
-  if (/(slow service|service slow|took forever|server)/.test(value)) return "service_speed";
+  if (/(slow service|service slow|took forever|server)/.test(value))
+    return "service_speed";
   if (/(host|front desk|check in|reservation)/.test(value)) return "host_queue";
-  if (/(kitchen|food took|cold food|hot food)/.test(value)) return "kitchen_delay";
+  if (/(kitchen|food took|cold food|hot food)/.test(value))
+    return "kitchen_delay";
   return "other";
 }
 
-function isRecent(publishTime?: string, recencyWindowDays = REVIEW_RECENCY_WINDOW_DAYS): boolean {
+function isRecent(
+  publishTime?: string,
+  recencyWindowDays = REVIEW_RECENCY_WINDOW_DAYS,
+): boolean {
   if (!publishTime) return false;
   const publishedAt = new Date(publishTime);
   if (Number.isNaN(publishedAt.getTime())) return false;
@@ -38,11 +49,16 @@ function hashRef(input: string): string {
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
 
-export async function buildReviewSignals(placeId: string): Promise<ReviewSignals | null> {
+export async function buildReviewSignals(
+  placeId: string,
+): Promise<ReviewSignals | null> {
   try {
-    const details = await withTimeout(getPlaceDetails(placeId), SOURCE_TIMEOUTS_MS.reviews);
-    const reviews = ((details.reviews ?? []) as ReviewInput[]).filter((review) =>
-      isRecent(review.publishTime),
+    const details = await withTimeout(
+      getPlaceDetails(placeId),
+      SOURCE_TIMEOUTS_MS.reviews,
+    );
+    const reviews = ((details.reviews ?? []) as ReviewInput[]).filter(
+      (review) => isRecent(review.publishTime),
     );
 
     const themes: Record<string, number> = {
@@ -62,7 +78,9 @@ export async function buildReviewSignals(placeId: string): Promise<ReviewSignals
       const theme = classifyTheme(text);
       themes[theme] = (themes[theme] ?? 0) + 1;
 
-      const refId = review.name ? hashRef(review.name) : hashRef(`${placeId}:${text}:${review.publishTime}`);
+      const refId = review.name
+        ? hashRef(review.name)
+        : hashRef(`${placeId}:${text}:${review.publishTime}`);
       refs.push({
         source: "google_reviews",
         placeId,
@@ -94,7 +112,8 @@ export async function buildReviewSignals(placeId: string): Promise<ReviewSignals
       .sort((a, b) => b[1] - a[1]);
 
     const topTheme = sortedThemes[0]?.[0] ?? "service_speed";
-    const topIssue = sortedThemes.find(([name]) => name !== topTheme)?.[0] ?? "wait_time";
+    const topIssue =
+      sortedThemes.find(([name]) => name !== topTheme)?.[0] ?? "wait_time";
 
     const recentDates = refs
       .map((ref) => new Date(ref.publishTime))
@@ -115,7 +134,8 @@ export async function buildReviewSignals(placeId: string): Promise<ReviewSignals
 
     const topRefs = refs
       .sort((a, b) => {
-        const diff = new Date(b.publishTime).getTime() - new Date(a.publishTime).getTime();
+        const diff =
+          new Date(b.publishTime).getTime() - new Date(a.publishTime).getTime();
         return Number.isNaN(diff) ? 0 : diff;
       })
       .slice(0, 3);

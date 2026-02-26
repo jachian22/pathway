@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
-import { endChatSession, runFirstInsight } from "@/server/services/intelligence/orchestrator";
+import {
+  endChatSession,
+  runFirstInsight,
+} from "@/server/services/intelligence/orchestrator";
 
 const cardTypeSchema = z.enum(["staffing", "risk", "opportunity"]);
 
@@ -21,16 +24,18 @@ const firstInsightInputSchema = z.object({
 });
 
 export const intelligenceRouter = createTRPCRouter({
-  firstInsight: publicProcedure.input(firstInsightInputSchema).mutation(async ({ ctx, input }) => {
-    return runFirstInsight(
-      {
-        db: ctx.db,
-        traceId: ctx.traceId,
-        requestId: ctx.requestId,
-      },
-      input,
-    );
-  }),
+  firstInsight: publicProcedure
+    .input(firstInsightInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      return runFirstInsight(
+        {
+          db: ctx.db,
+          traceId: ctx.traceId,
+          requestId: ctx.requestId,
+        },
+        input,
+      );
+    }),
 
   refineInsight: publicProcedure
     .input(
@@ -54,7 +59,9 @@ export const intelligenceRouter = createTRPCRouter({
       z.object({
         sessionId: z.string().uuid(),
         distinctId: z.string().optional(),
-        endReason: z.enum(["completed", "user_exit", "inactive_timeout", "error"]).default("completed"),
+        endReason: z
+          .enum(["completed", "user_exit", "inactive_timeout", "error"])
+          .default("completed"),
       }),
     )
     .mutation(async ({ ctx, input }) => {

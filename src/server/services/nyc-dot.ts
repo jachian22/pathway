@@ -33,21 +33,31 @@ function toId(input: unknown, fallbackIndex: number): string {
   return String(fallbackIndex);
 }
 
-function extractLatLon(record: Record<string, unknown>): { lat?: number; lon?: number } {
+function extractLatLon(record: Record<string, unknown>): {
+  lat?: number;
+  lon?: number;
+} {
   const latitude =
     parseNumber(record.latitude) ??
     parseNumber(record.lat) ??
-    parseNumber((record.location as Record<string, unknown> | undefined)?.latitude);
+    parseNumber(
+      (record.location as Record<string, unknown> | undefined)?.latitude,
+    );
 
   const longitude =
     parseNumber(record.longitude) ??
     parseNumber(record.lon) ??
-    parseNumber((record.location as Record<string, unknown> | undefined)?.longitude);
+    parseNumber(
+      (record.location as Record<string, unknown> | undefined)?.longitude,
+    );
 
   return { lat: latitude, lon: longitude };
 }
 
-function extractStartEnd(record: Record<string, unknown>): { startAt?: string; endAt?: string } {
+function extractStartEnd(record: Record<string, unknown>): {
+  startAt?: string;
+  endAt?: string;
+} {
   const startAt =
     (record.start_date as string | undefined) ??
     (record.start_datetime as string | undefined) ??
@@ -82,7 +92,9 @@ function extractStreet(record: Record<string, unknown>): string | undefined {
   );
 }
 
-export async function fetchDotClosuresNearby(options: DotFetchOptions): Promise<DotClosure[]> {
+export async function fetchDotClosuresNearby(
+  options: DotFetchOptions,
+): Promise<DotClosure[]> {
   const baseUrl = env.NYC_DOT_CLOSURES_URL;
   if (!baseUrl) {
     return [];
@@ -132,6 +144,9 @@ export async function fetchDotClosuresNearby(options: DotFetchOptions): Promise<
       if (closure.lat === undefined || closure.lon === undefined) {
         return true;
       }
-      return toMiles(options.lat, options.lon, closure.lat, closure.lon) <= radiusMiles;
+      return (
+        toMiles(options.lat, options.lon, closure.lat, closure.lon) <=
+        radiusMiles
+      );
     });
 }

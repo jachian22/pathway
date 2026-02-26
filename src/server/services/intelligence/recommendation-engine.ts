@@ -1,4 +1,12 @@
-import { type CardType, type ClosureSignal, type DoeSignal, type Recommendation, type ReviewSignals, type VenueEventSignal, type WeatherSignal } from "@/server/services/intelligence/types";
+import {
+  type CardType,
+  type ClosureSignal,
+  type DoeSignal,
+  type Recommendation,
+  type ReviewSignals,
+  type VenueEventSignal,
+  type WeatherSignal,
+} from "@/server/services/intelligence/types";
 
 interface LocationInputs {
   locationLabel: string;
@@ -51,7 +59,12 @@ function mapCardIntro(cardType: CardType): string {
 }
 
 function firstDoeModifier(days: DoeSignal[]): DoeModifier | null {
-  const row = days.find((day) => !day.isSchoolDay);
+  const row = days.find((day) => {
+    if (day.isSchoolDay) return false;
+    if (day.eventType.toLowerCase().includes("weekend")) return false;
+    const weekday = new Date(`${day.date}T00:00:00`).getDay();
+    return weekday >= 1 && weekday <= 5;
+  });
   if (!row) return null;
 
   const day = new Date(`${row.date}T00:00:00`);
@@ -65,7 +78,14 @@ function firstDoeModifier(days: DoeSignal[]): DoeModifier | null {
   };
 }
 
-function buildEventRecommendation(input: LocationInputs, doeModifier: DoeModifier | null): Recommendation | null {
+function doeSignalLine(doeModifier: DoeModifier): string {
+  return `NYC DOE marks ${doeModifier.eventType} on ${doeModifier.weekday}, which can shift midday-to-dinner demand mix`;
+}
+
+function buildEventRecommendation(
+  input: LocationInputs,
+  doeModifier: DoeModifier | null,
+): Recommendation | null {
   const event = input.events?.[0];
   if (!event) return null;
 
@@ -74,7 +94,9 @@ function buildEventRecommendation(input: LocationInputs, doeModifier: DoeModifie
   const timeWindow = `${impactStart.toLocaleDateString("en-US", { weekday: "short" })} ${impactStart.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}-${impactEnd.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
 
   let action = `${timeWindow}: +1-2 FOH at ${input.locationLabel}`;
-  const why = [`${event.eventName} at ${event.venueName} increases nearby foot traffic`];
+  const why = [
+    `${event.eventName} at ${event.venueName} increases nearby foot traffic`,
+  ];
   const eventDate = event.startAt.slice(0, 10);
   const doeApplies = doeModifier?.date === eventDate;
 
@@ -82,7 +104,9 @@ function buildEventRecommendation(input: LocationInputs, doeModifier: DoeModifie
     const primaryTheme = topTheme(input.review);
     if (primaryTheme.includes("wait") || primaryTheme.includes("host")) {
       action = `${timeWindow}: add 1 host + 1 FOH floater at ${input.locationLabel}`;
-      why.push("Recent guest feedback flags wait/host pressure during peak windows");
+      why.push(
+        "Recent guest feedback flags wait/host pressure during peak windows",
+      );
     }
   }
 
@@ -92,7 +116,7 @@ function buildEventRecommendation(input: LocationInputs, doeModifier: DoeModifie
     } else {
       action = `${action} + keep 1 flex runner`;
     }
-    why.push(`NYC DOE marks ${doeModifier.eventType} on ${doeModifier.weekday}, which can shift midday-to-dinner demand mix`);
+    why.push(doeSignalLine(doeModifier));
   }
 
   const baselineText = input.baselineFoh
@@ -119,13 +143,16 @@ function buildEventRecommendation(input: LocationInputs, doeModifier: DoeModifie
         input.baselineFoh !== undefined
           ? `With baseline ${input.baselineFoh}, adding coverage protects throughput during event overlap.`
           : "Adding coverage protects throughput in the event window.",
-      escalationTrigger: "Move to the upper staffing range if quoted wait exceeds 15 minutes by 6:30pm.",
+      escalationTrigger:
+        "Move to the upper staffing range if quoted wait exceeds 15 minutes by 6:30pm.",
     },
     reviewBacked: Boolean(input.review && input.review.evidenceCount > 0),
   };
 }
 
-function buildClosureRecommendation(input: LocationInputs): Recommendation | null {
+function buildClosureRecommendation(
+  input: LocationInputs,
+): Recommendation | null {
   const closure = input.closures?.[0];
   if (!closure) return null;
 
@@ -141,17 +168,22 @@ function buildClosureRecommendation(input: LocationInputs): Recommendation | nul
       why: [
         `${closure.title}${closure.street ? ` on ${closure.street}` : ""} can block or slow access`,
       ],
-      deltaReasoning: "Shifting delivery timing reduces service disruption risk.",
-      escalationTrigger: "If vendors confirm delay risk, reroute deliveries to alternate windows.",
+      deltaReasoning:
+        "Shifting delivery timing reduces service disruption risk.",
+      escalationTrigger:
+        "If vendors confirm delay risk, reroute deliveries to alternate windows.",
     },
     reviewBacked: false,
   };
 }
 
-function buildWeatherRecommendation(input: LocationInputs): Recommendation | null {
+function buildWeatherRecommendation(
+  input: LocationInputs,
+): Recommendation | null {
   if (!input.weather) return null;
 
-  if (!input.weather.rainLikely && !input.weather.tempExtremeLikely) return null;
+  if (!input.weather.rainLikely && !input.weather.tempExtremeLikely)
+    return null;
 
   const timeWindow = input.weather.rainWindow
     ? `${new Date(input.weather.rainWindow).toLocaleDateString("en-US", { weekday: "short" })} service window`
@@ -163,20 +195,52 @@ function buildWeatherRecommendation(input: LocationInputs): Recommendation | nul
 
   return {
     locationLabel: input.locationLabel,
-    action: `${timeWindow}: reduce patio/prep exposure and bias staffing indoors at ${input.locationLabel}`,
+    action: `${timeWindow}: shift staffing to indoor and off-prem flow coverage at ${input.locationLabel}`,
     timeWindow,
     confidence: "medium",
     sourceName: "weather",
     explanation: {
       why: [reason],
-      deltaReasoning: "Weather volatility can shift dine-in behavior and pacing.",
-      escalationTrigger: "If precipitation begins before peak, rebalance FOH to indoor sections.",
+      deltaReasoning:
+        "Weather volatility can shift dine-in behavior and pacing.",
+      escalationTrigger:
+        "If precipitation begins before peak, rebalance FOH to indoor sections.",
     },
     reviewBacked: false,
   };
 }
 
-function buildDoeRecommendation(input: LocationInputs, doeModifier: DoeModifier): Recommendation {
+function priorityByCard(cardType: CardType, rec: Recommendation): number {
+  if (cardType === "risk") {
+    if (rec.sourceName === "closures") return 100;
+    if (rec.sourceName === "weather") return 90;
+    if (rec.sourceName === "events") return 80;
+    if (rec.sourceName === "doe") return 60;
+    if (rec.sourceName === "reviews") return 40;
+    return 0;
+  }
+
+  if (cardType === "opportunity") {
+    if (rec.sourceName === "events") return 100;
+    if (rec.sourceName === "reviews") return 90;
+    if (rec.sourceName === "doe") return 70;
+    if (rec.sourceName === "weather") return 30;
+    if (rec.sourceName === "closures") return 10;
+    return 0;
+  }
+
+  if (rec.sourceName === "events") return 100;
+  if (rec.sourceName === "closures") return 90;
+  if (rec.sourceName === "weather") return 80;
+  if (rec.sourceName === "doe") return 70;
+  if (rec.sourceName === "reviews") return 60;
+  return 0;
+}
+
+function buildDoeRecommendation(
+  input: LocationInputs,
+  doeModifier: DoeModifier,
+): Recommendation {
   const timeWindow = `${doeModifier.weekday} lunch (11am-2pm)`;
   return {
     locationLabel: input.locationLabel,
@@ -186,17 +250,21 @@ function buildDoeRecommendation(input: LocationInputs, doeModifier: DoeModifier)
     sourceName: "doe",
     explanation: {
       why: [
-        `NYC DOE calendar marks ${doeModifier.eventType} on ${doeModifier.weekday}.`,
+        doeSignalLine(doeModifier),
         "School-day schedule shifts can change lunchtime pacing and family order mix.",
       ],
-      deltaReasoning: "A flex role protects throughput while avoiding overstaffing.",
-      escalationTrigger: "Escalate +1 FOH if lunch queue exceeds normal pace by noon.",
+      deltaReasoning:
+        "A flex role protects throughput while avoiding overstaffing.",
+      escalationTrigger:
+        "Escalate +1 FOH if lunch queue exceeds normal pace by noon.",
     },
     reviewBacked: false,
   };
 }
 
-function buildReviewOnlyRecommendation(input: LocationInputs): Recommendation | null {
+function buildReviewOnlyRecommendation(
+  input: LocationInputs,
+): Recommendation | null {
   const review = input.review;
   if (!review || review.evidenceCount < 3) return null;
 
@@ -215,18 +283,22 @@ function buildReviewOnlyRecommendation(input: LocationInputs): Recommendation | 
     },
     explanation: {
       why: [`Guest reviews repeatedly reference ${dominantTheme} friction.`],
-      deltaReasoning: "Monitoring and quick staffing adjustments reduce repeat complaint patterns.",
-      escalationTrigger: "Escalate +1 FOH if queue or quoted wait rises above normal baseline.",
+      deltaReasoning:
+        "Monitoring and quick staffing adjustments reduce repeat complaint patterns.",
+      escalationTrigger:
+        "Escalate +1 FOH if queue or quoted wait rises above normal baseline.",
     },
     reviewBacked: true,
   };
 }
 
-function buildSnapshot(locationLabel: string, review: ReviewSignals): GuestSnapshot {
+function buildSnapshot(
+  locationLabel: string,
+  review: ReviewSignals,
+): GuestSnapshot {
   return {
     locationLabel,
-    text:
-      `${review.guestSnapshot} Operationally, this points to pressure around ${secondTheme(review)} patterns in peak periods.`,
+    text: `${review.guestSnapshot} Operationally, this points to pressure around ${secondTheme(review)} patterns in peak periods.`,
     sampleReviewCount: review.sampleReviewCount,
     recencyWindowDays: review.recencyWindowDays,
     confidence: review.confidence,
@@ -281,16 +353,30 @@ export function buildRecommendations(
       sourceName: "system",
       explanation: {
         why: ["No high-signal external factors are currently available."],
-        deltaReasoning: "Conservative operating posture minimizes disruption risk under uncertainty.",
+        deltaReasoning:
+          "Conservative operating posture minimizes disruption risk under uncertainty.",
         escalationTrigger: "Re-run checks when new external signals arrive.",
       },
       reviewBacked: false,
     });
   }
 
+  recommendations.sort((a, b) => {
+    const delta = priorityByCard(cardType, b) - priorityByCard(cardType, a);
+    if (delta !== 0) return delta;
+    if (a.confidence !== b.confidence) {
+      const score = { high: 3, medium: 2, low: 1 } as const;
+      return score[b.confidence] - score[a.confidence];
+    }
+    return a.locationLabel.localeCompare(b.locationLabel);
+  });
+
   const summaryLines = [mapCardIntro(cardType)];
-  for (const recommendation of recommendations.slice(0, 4)) {
-    summaryLines.push(`- ${recommendation.action} (${recommendation.confidence})`);
+  const summaryCap = cardType === "opportunity" ? 3 : 4;
+  for (const recommendation of recommendations.slice(0, summaryCap)) {
+    summaryLines.push(
+      `- ${recommendation.action} (${recommendation.confidence})`,
+    );
   }
   if (options?.competitorSnapshot) {
     summaryLines.push(options.competitorSnapshot);

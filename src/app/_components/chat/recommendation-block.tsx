@@ -20,8 +20,14 @@ function confidenceBadge(confidence: Recommendation["confidence"]): string {
   return "badge-escalated";
 }
 
-export function RecommendationBlock({ recommendations, snapshots }: RecommendationBlockProps) {
-  const [openEvidenceIndex, setOpenEvidenceIndex] = useState<number | null>(null);
+export function RecommendationBlock({
+  recommendations,
+  snapshots,
+}: RecommendationBlockProps) {
+  const [openEvidenceIndex, setOpenEvidenceIndex] = useState<number | null>(
+    null,
+  );
+  const [openDetailIndex, setOpenDetailIndex] = useState<number | null>(null);
 
   const reviewBackedRecommendationCount = useMemo(
     () => recommendations.filter((item) => item.reviewBacked).length,
@@ -36,8 +42,12 @@ export function RecommendationBlock({ recommendations, snapshots }: Recommendati
     [recommendations],
   );
 
-  const hasExplanationBlock = recommendations.some((item) => item.explanation.why.length > 0);
-  const hasTriggerBlock = recommendations.some((item) => item.explanation.escalationTrigger.length > 0);
+  const hasExplanationBlock = recommendations.some(
+    (item) => item.explanation.why.length > 0,
+  );
+  const hasTriggerBlock = recommendations.some(
+    (item) => item.explanation.escalationTrigger.length > 0,
+  );
 
   useEffect(() => {
     captureEvent("recommendation_rendered", {
@@ -78,15 +88,21 @@ export function RecommendationBlock({ recommendations, snapshots }: Recommendati
   return (
     <div className="card mt-4">
       {snapshots.length > 0 ? (
-        <div className="mb-5 rounded-lg border border-surface-3 bg-surface-1 p-4">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-text-secondary">Guest Signal Snapshot</h3>
+        <div className="border-surface-3 bg-surface-1 mb-5 rounded-lg border p-4">
+          <h3 className="text-text-secondary text-sm font-semibold tracking-wide uppercase">
+            Guest Signal Snapshot
+          </h3>
           <div className="mt-3 space-y-3">
             {snapshots.map((snapshot) => (
               <div key={snapshot.locationLabel}>
-                <p className="font-medium text-charcoal">{snapshot.locationLabel}</p>
-                <p className="text-sm text-text-primary">{snapshot.text}</p>
-                <p className="mt-1 text-xs text-text-secondary">
-                  sample {snapshot.sampleReviewCount}, last {snapshot.recencyWindowDays} days, confidence {snapshot.confidence}
+                <p className="text-charcoal font-medium">
+                  {snapshot.locationLabel}
+                </p>
+                <p className="text-text-primary text-sm">{snapshot.text}</p>
+                <p className="text-text-secondary mt-1 text-xs">
+                  sample {snapshot.sampleReviewCount}, last{" "}
+                  {snapshot.recencyWindowDays} days, confidence{" "}
+                  {snapshot.confidence}
                 </p>
               </div>
             ))}
@@ -94,26 +110,70 @@ export function RecommendationBlock({ recommendations, snapshots }: Recommendati
         </div>
       ) : null}
 
-      <h3 className="text-lg font-semibold text-charcoal">Actions</h3>
+      <h3 className="text-charcoal text-lg font-semibold">Actions</h3>
       <div className="mt-4 space-y-4">
         {recommendations.map((item, idx) => (
-          <div key={`${item.locationLabel}-${item.action}-${idx}`} className="rounded-lg border border-surface-3 bg-surface-0 p-4">
+          <div
+            key={`${item.locationLabel}-${item.action}-${idx}`}
+            className="border-surface-3 bg-surface-0 rounded-lg border p-4"
+          >
             <div className="flex flex-wrap items-center gap-2">
-              <span className={confidenceBadge(item.confidence)}>{item.confidence}</span>
-              <span className="text-xs text-text-secondary">
+              <span className={confidenceBadge(item.confidence)}>
+                {item.confidence}
+              </span>
+              <span className="text-text-secondary text-xs">
                 source: {item.sourceName}
-                {item.sourceFreshnessSeconds ? ` · ${Math.floor(item.sourceFreshnessSeconds / 3600)}h old` : ""}
+                {item.sourceFreshnessSeconds
+                  ? ` · ${Math.floor(item.sourceFreshnessSeconds / 3600)}h old`
+                  : ""}
               </span>
             </div>
 
-            <p className="mt-2 font-medium text-charcoal">{item.action}</p>
-            <p className="mt-1 text-sm text-text-secondary">Time window: {item.timeWindow}</p>
+            <p className="text-charcoal mt-2 font-medium">{item.action}</p>
+            <p className="text-text-secondary mt-1 text-sm">
+              Time window: {item.timeWindow}
+            </p>
+            {item.explanation.why.length > 0 ||
+            item.explanation.escalationTrigger.length > 0 ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  className="suggestion-chip"
+                  onClick={() => {
+                    const next = openDetailIndex === idx ? null : idx;
+                    setOpenDetailIndex(next);
+                    if (next !== null) {
+                      captureEvent("recommendation_details_viewed", {
+                        recommendation_index: idx,
+                        has_why: item.explanation.why.length > 0,
+                        has_trigger:
+                          item.explanation.escalationTrigger.length > 0,
+                      });
+                    }
+                  }}
+                >
+                  {openDetailIndex === idx
+                    ? "Hide why & trigger"
+                    : "Show why & trigger"}
+                </button>
 
-            {item.explanation.why.length > 0 ? (
-              <p className="mt-2 text-sm text-text-primary">Why: {item.explanation.why.slice(0, 2).join("; ")}</p>
+                {openDetailIndex === idx ? (
+                  <div className="border-surface-3 bg-surface-1 mt-3 space-y-2 rounded-md border p-3">
+                    {item.explanation.why.length > 0 ? (
+                      <p className="text-text-primary text-sm">
+                        Why: {item.explanation.why.slice(0, 2).join("; ")}
+                      </p>
+                    ) : null}
+
+                    {item.explanation.escalationTrigger.length > 0 ? (
+                      <p className="text-text-primary text-sm">
+                        Trigger: {item.explanation.escalationTrigger}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
-
-            <p className="mt-2 text-sm text-text-primary">Trigger: {item.explanation.escalationTrigger}</p>
 
             {item.evidence && item.evidence.topRefs.length > 0 ? (
               <div className="mt-3">
@@ -127,22 +187,29 @@ export function RecommendationBlock({ recommendations, snapshots }: Recommendati
                     if (next !== null) {
                       captureEvent("review_evidence_viewed", {
                         snapshot_type: "own",
-                        evidence_refs_shown_count: item.evidence?.topRefs.length ?? 0,
+                        evidence_refs_shown_count:
+                          item.evidence?.topRefs.length ?? 0,
                         contains_quote_snippets: true,
                       });
                     }
                   }}
                 >
-                  {openEvidenceIndex === idx ? "Hide evidence" : "Show evidence"}
+                  {openEvidenceIndex === idx
+                    ? "Hide evidence"
+                    : "Show evidence"}
                 </button>
 
                 {openEvidenceIndex === idx ? (
-                  <div className="mt-3 space-y-2 rounded-md border border-surface-3 bg-surface-1 p-3">
+                  <div className="border-surface-3 bg-surface-1 mt-3 space-y-2 rounded-md border p-3">
                     {item.evidence.topRefs.map((ref) => (
-                      <div key={ref.reviewIdOrHash} className="text-sm text-text-primary">
+                      <div
+                        key={ref.reviewIdOrHash}
+                        className="text-text-primary text-sm"
+                      >
                         <p>“{ref.excerpt}”</p>
-                        <p className="mt-1 text-xs text-text-secondary">
-                          {new Date(ref.publishTime).toLocaleDateString()} · rating {ref.rating ?? "n/a"} · {ref.theme}
+                        <p className="text-text-secondary mt-1 text-xs">
+                          {new Date(ref.publishTime).toLocaleDateString()} ·
+                          rating {ref.rating ?? "n/a"} · {ref.theme}
                         </p>
                       </div>
                     ))}

@@ -91,9 +91,11 @@ export async function searchEvents(params: {
   if (params.latlong) searchParams.set("latlong", params.latlong);
   if (params.radius) searchParams.set("radius", String(params.radius));
   if (params.unit) searchParams.set("unit", params.unit);
-  if (params.startDateTime) searchParams.set("startDateTime", params.startDateTime);
+  if (params.startDateTime)
+    searchParams.set("startDateTime", params.startDateTime);
   if (params.endDateTime) searchParams.set("endDateTime", params.endDateTime);
-  if (params.classificationName) searchParams.set("classificationName", params.classificationName);
+  if (params.classificationName)
+    searchParams.set("classificationName", params.classificationName);
   if (params.sort) searchParams.set("sort", params.sort);
 
   const url = `${BASE_URL}/events.json?${searchParams.toString()}`;
@@ -129,7 +131,10 @@ export async function searchVenues(params: {
   radius?: number;
   size?: number;
   page?: number;
-}): Promise<{ _embedded?: { venues: EventVenue[] }; page: EventSearchResponse["page"] }> {
+}): Promise<{
+  _embedded?: { venues: EventVenue[] };
+  page: EventSearchResponse["page"];
+}> {
   const searchParams = new URLSearchParams({
     apikey: env.TICKETMASTER_API_KEY,
     size: String(params.size ?? 20),

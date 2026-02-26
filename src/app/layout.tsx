@@ -8,7 +8,8 @@ import { PostHogProvider } from "@/app/_components/posthog-provider";
 
 export const metadata: Metadata = {
   title: "Pathway | Restaurant Intelligence",
-  description: "Plan staffing and prep for the next 3 days across your NYC locations.",
+  description:
+    "Plan staffing and prep for the next 3 days across your NYC locations.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 

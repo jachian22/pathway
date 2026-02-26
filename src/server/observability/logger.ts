@@ -13,7 +13,10 @@ export interface StructuredLog {
   [key: string]: unknown;
 }
 
-export function logStructured(level: LogLevel, payload: Omit<StructuredLog, "ts" | "level">): void {
+export function logStructured(
+  level: LogLevel,
+  payload: Omit<StructuredLog, "ts" | "level">,
+): void {
   const log = {
     ts: new Date().toISOString(),
     level,

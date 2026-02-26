@@ -23,6 +23,11 @@ type PendingClarification = {
   askedForFirstLabel: string;
 };
 
+type ErrorBannerState = {
+  message: string;
+  retryFollowup?: string;
+};
+
 function parseLocationLines(value: string): string[] {
   const normalized = value.trim();
   if (normalized.length === 0) return [];
@@ -113,7 +118,9 @@ export function StaffingChat() {
   const [followUpInput, setFollowUpInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [locationLabels, setLocationLabels] = useState<string[]>([]);
+  const [activeLocations, setActiveLocations] = useState<string[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [errorBanner, setErrorBanner] = useState<ErrorBannerState | null>(null);
   const [pendingClarification, setPendingClarification] =
     useState<PendingClarification | null>(null);
 
@@ -145,7 +152,32 @@ export function StaffingChat() {
     });
   }, []);
 
-  const submitInsight = async (withFollowup?: string) => {
+  const submitInsight = async (
+    withFollowup?: string,
+    options?: { suppressUserEcho?: boolean },
+  ) => {
+    setErrorBanner(null);
+    const locationsForRequest =
+      withFollowup && parsedLocations.length === 0
+        ? activeLocations
+        : parsedLocations;
+    const locationsChanged =
+      !withFollowup &&
+      sessionId !== null &&
+      JSON.stringify(locationsForRequest) !== JSON.stringify(activeLocations);
+
+    if (locationsForRequest.length === 0) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-location-required-${Date.now()}`,
+          role: "assistant",
+          text: "Please add at least one NYC location before I run this.",
+        },
+      ]);
+      return;
+    }
+
     const distinctId = getDistinctId();
 
     if (!hasCapturedStart.current) {
@@ -177,14 +209,14 @@ export function StaffingChat() {
     }
 
     captureEvent("locations_parsed", {
-      parse_status: parsedLocations.length > 0 ? "success" : "error",
-      valid_count: parsedLocations.length,
-      invalid_count: parsedLocations.length === 0 ? 1 : 0,
+      parse_status: locationsForRequest.length > 0 ? "success" : "error",
+      valid_count: locationsForRequest.length,
+      invalid_count: locationsForRequest.length === 0 ? 1 : 0,
       nyc_validation_failed: false,
       ambiguous_count: 0,
     });
 
-    if (withFollowup) {
+    if (withFollowup && !options?.suppressUserEcho) {
       setMessages((prev) => [
         ...prev,
         {
@@ -276,56 +308,115 @@ export function StaffingChat() {
       }
     }
 
+    const nextSessionId = locationsChanged ? null : sessionId;
     const payload = {
-      sessionId: sessionId ?? undefined,
+      sessionId: nextSessionId ?? undefined,
       distinctId,
       cardType: selectedCard,
-      locations: parsedLocations,
+      locations: locationsForRequest,
       competitorName: competitorName.trim() || undefined,
       baselineContext,
     };
 
-    const response = sessionId
-      ? await refineInsight.mutateAsync({ ...payload, sessionId })
-      : await firstInsight.mutateAsync(payload);
+    if (locationsChanged) {
+      setMessages([]);
+      setSessionId(null);
+      setLocationLabels([]);
+      setPendingClarification(null);
+      setActiveLocations([]);
+    }
 
-    setSessionId(response.sessionId);
-    setLocationLabels(response.locationLabels);
+    try {
+      const response = nextSessionId
+        ? await refineInsight.mutateAsync({
+            ...payload,
+            sessionId: nextSessionId,
+          })
+        : await firstInsight.mutateAsync(payload);
 
+      setSessionId(response.sessionId);
+      setLocationLabels(response.locationLabels);
+      setActiveLocations(locationsForRequest);
+      setErrorBanner(null);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-${response.turnIndex}-${Date.now()}`,
+          role: "assistant",
+          text: response.message,
+          recommendations: response.recommendations,
+          snapshots: response.snapshots,
+        },
+      ]);
+
+      if (!hasCapturedFirstInsight.current) {
+        hasCapturedFirstInsight.current = true;
+        captureEvent("first_insight_rendered", {
+          first_insight_latency_ms: response.firstInsightLatencyMs,
+          used_fallback: response.usedFallback,
+          sources_available: Object.entries(response.sources)
+            .filter(([, status]) => status.status === "ok")
+            .map(([source]) => source),
+          recommendation_count: response.recommendations.length,
+        });
+      }
+
+      if (response.usedFallback) {
+        const sourcesDown = Object.entries(response.sources)
+          .filter(([, status]) => status.status !== "ok")
+          .map(([source]) => source);
+        captureEvent("fallback_used", {
+          fallback_type: "partial_data",
+          sources_down: sourcesDown,
+          reason: "one_or_more_sources_unavailable",
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown_error";
+      captureEvent("chat_error_client", {
+        stage: "submit_insight",
+        error_message: message,
+        retryable: true,
+      });
+      setErrorBanner({
+        message:
+          "I hit a temporary error while generating your insight. Please retry.",
+        retryFollowup: withFollowup,
+      });
+      return;
+    }
+  };
+
+  const resetSessionForNewLocations = () => {
+    if (!sessionId) return;
+    setSessionId(null);
     setMessages((prev) => [
       ...prev,
       {
-        id: `assistant-${response.turnIndex}-${Date.now()}`,
+        id: `assistant-reset-${Date.now()}`,
         role: "assistant",
-        text: response.message,
-        recommendations: response.recommendations,
-        snapshots: response.snapshots,
+        text: "Location list changed. I will start a fresh run on your next insight request.",
       },
     ]);
-
-    if (!hasCapturedFirstInsight.current) {
-      hasCapturedFirstInsight.current = true;
-      captureEvent("first_insight_rendered", {
-        first_insight_latency_ms: response.firstInsightLatencyMs,
-        used_fallback: response.usedFallback,
-        sources_available: Object.entries(response.sources)
-          .filter(([, status]) => status.status === "ok")
-          .map(([source]) => source),
-        recommendation_count: response.recommendations.length,
-      });
-    }
-
-    if (response.usedFallback) {
-      const sourcesDown = Object.entries(response.sources)
-        .filter(([, status]) => status.status !== "ok")
-        .map(([source]) => source);
-      captureEvent("fallback_used", {
-        fallback_type: "partial_data",
-        sources_down: sourcesDown,
-        reason: "one_or_more_sources_unavailable",
-      });
-    }
+    setLocationLabels([]);
+    setPendingClarification(null);
+    setActiveLocations([]);
+    setErrorBanner(null);
   };
+
+  useEffect(() => {
+    if (!sessionId) return;
+    if (JSON.stringify(parsedLocations) === JSON.stringify(activeLocations))
+      return;
+    resetSessionForNewLocations();
+    captureEvent("location_set_changed_mid_session", {
+      previous_count: activeLocations.length,
+      next_count: parsedLocations.length,
+      action: "session_reset",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationsInput]);
 
   useEffect(() => {
     return () => {
@@ -433,6 +524,35 @@ export function StaffingChat() {
                 </p>
               </div>
             </div>
+            {errorBanner ? (
+              <div className="border-warning bg-warning/5 mx-4 mt-3 rounded-md border px-3 py-2">
+                <p className="text-warning text-sm">{errorBanner.message}</p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    className="suggestion-chip"
+                    onClick={() => {
+                      captureEvent("chat_retry_clicked", {
+                        source: "error_banner",
+                        has_followup: Boolean(errorBanner.retryFollowup),
+                      });
+                      void submitInsight(errorBanner.retryFollowup, {
+                        suppressUserEcho: true,
+                      });
+                    }}
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    className="suggestion-chip"
+                    onClick={() => setErrorBanner(null)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <div className="flex-1 overflow-y-auto p-4">
               {messages.length === 0 ? (

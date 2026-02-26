@@ -6,7 +6,9 @@ type CacheEntry<T> = {
 
 const inMemoryCache = new Map<string, CacheEntry<unknown>>();
 
-export function readCache<T>(key: string): { value: T; fetchedAtMs: number } | null {
+export function readCache<T>(
+  key: string,
+): { value: T; fetchedAtMs: number } | null {
   const item = inMemoryCache.get(key) as CacheEntry<T> | undefined;
   if (!item) return null;
   if (item.expiresAtMs < Date.now()) {

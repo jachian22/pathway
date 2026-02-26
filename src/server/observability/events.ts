@@ -20,9 +20,17 @@ export interface EventEnvelope {
   [key: string]: unknown;
 }
 
-const DISALLOWED_KEYS = new Set(["address", "email", "phone", "content_text", "raw_review_text"]);
+const DISALLOWED_KEYS = new Set([
+  "address",
+  "email",
+  "phone",
+  "content_text",
+  "raw_review_text",
+]);
 
-export function sanitizeEventPayload(payload: Record<string, unknown>): Record<string, unknown> {
+export function sanitizeEventPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload)) {
     if (DISALLOWED_KEYS.has(key)) continue;
@@ -32,7 +40,10 @@ export function sanitizeEventPayload(payload: Record<string, unknown>): Record<s
   return sanitized;
 }
 
-export function buildEventPayload(envelope: EventEnvelope, payload: Record<string, unknown> = {}) {
+export function buildEventPayload(
+  envelope: EventEnvelope,
+  payload: Record<string, unknown> = {},
+) {
   return sanitizeEventPayload({
     ...envelope,
     ...payload,

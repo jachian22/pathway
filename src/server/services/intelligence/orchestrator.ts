@@ -90,6 +90,41 @@ export interface FirstInsightOutput {
   invalidLocations: string[];
 }
 
+async function safeSideEffect(
+  ctx: IntelligenceContext,
+  params: {
+    sessionId: string;
+    turnIndex: number;
+    operation: string;
+    requestId?: string;
+  },
+  operation: () => Promise<void>,
+): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown_error";
+    await emitEvent(
+      {
+        event: "chat.error",
+        trace_id: ctx.traceId,
+        request_id: params.requestId ?? ctx.requestId,
+        session_id: params.sessionId,
+        turn_index: params.turnIndex,
+        route: "intelligence.firstInsight",
+        env: process.env.NODE_ENV,
+      },
+      {
+        error_type: "side_effect_failure",
+        error_message: `${params.operation}: ${message}`,
+      },
+      {
+        level: "warn",
+      },
+    );
+  }
+}
+
 function buildMessage(output: {
   summary: string;
   snapshots: FirstInsightOutput["snapshots"];
@@ -702,43 +737,83 @@ export async function runFirstInsight(
       fallbackText,
     );
 
-    await persistRecommendations(ctx, {
-      sessionId,
-      messageId: assistantMessageId,
-      turnIndex,
-      recommendations: [fallbackRecommendation],
-    });
-
-    await ctx.db.insert(chatFallbacks).values({
-      sessionId,
-      turnIndex,
-      fallbackType: "validation",
-      reason: "No resolvable NYC locations",
-      sourcesDown: ["geocode"],
-      responseText: fallbackText,
-    });
-
-    await ctx.db
-      .update(chatSessions)
-      .set({ hadFallback: true })
-      .where(eq(chatSessions.id, sessionId));
-
-    await emitEvent(
+    await safeSideEffect(
+      ctx,
       {
-        event: "chat.fallback.triggered",
-        trace_id: ctx.traceId,
-        request_id: ctx.requestId,
-        session_id: sessionId,
-        turn_index: turnIndex,
-        route: "intelligence.firstInsight",
+        sessionId,
+        turnIndex,
+        operation: "persist_validation_recommendation",
       },
-      {
-        fallback_type: "validation",
+      async () => {
+        await persistRecommendations(ctx, {
+          sessionId,
+          messageId: assistantMessageId,
+          turnIndex,
+          recommendations: [fallbackRecommendation],
+        });
       },
+    );
+
+    await safeSideEffect(
+      ctx,
       {
-        level: "warn",
-        sendToPosthog: true,
-        posthogDistinctId: input.distinctId,
+        sessionId,
+        turnIndex,
+        operation: "persist_validation_fallback",
+      },
+      async () => {
+        await ctx.db.insert(chatFallbacks).values({
+          sessionId,
+          turnIndex,
+          fallbackType: "validation",
+          reason: "No resolvable NYC locations",
+          sourcesDown: ["geocode"],
+          responseText: fallbackText,
+        });
+      },
+    );
+
+    await safeSideEffect(
+      ctx,
+      {
+        sessionId,
+        turnIndex,
+        operation: "mark_session_had_fallback",
+      },
+      async () => {
+        await ctx.db
+          .update(chatSessions)
+          .set({ hadFallback: true })
+          .where(eq(chatSessions.id, sessionId));
+      },
+    );
+
+    await safeSideEffect(
+      ctx,
+      {
+        sessionId,
+        turnIndex,
+        operation: "emit_validation_fallback",
+      },
+      async () => {
+        await emitEvent(
+          {
+            event: "chat.fallback.triggered",
+            trace_id: ctx.traceId,
+            request_id: ctx.requestId,
+            session_id: sessionId,
+            turn_index: turnIndex,
+            route: "intelligence.firstInsight",
+          },
+          {
+            fallback_type: "validation",
+          },
+          {
+            level: "warn",
+            sendToPosthog: true,
+            posthogDistinctId: input.distinctId,
+          },
+        );
       },
     );
 
@@ -770,21 +845,54 @@ export async function runFirstInsight(
     }
   }
 
-  await syncBaselineMemory(ctx, {
-    sessionId,
-    distinctId: input.distinctId,
-    turnIndex,
-    locationLabels: resolvedLocations.map((location) => location.label),
-    baselineByLocation,
-    recomputeLatencyMs: nowMs() - startedMs,
-  });
-
-  const competitor = await resolveCompetitor(
+  await safeSideEffect(
     ctx,
-    sessionId,
-    turnIndex,
-    input.competitorName,
+    {
+      sessionId,
+      turnIndex,
+      operation: "sync_baseline_memory",
+    },
+    async () => {
+      await syncBaselineMemory(ctx, {
+        sessionId,
+        distinctId: input.distinctId,
+        turnIndex,
+        locationLabels: resolvedLocations.map((location) => location.label),
+        baselineByLocation,
+        recomputeLatencyMs: nowMs() - startedMs,
+      });
+    },
   );
+
+  let competitor: { placeId?: string; snapshot?: string } = {};
+  try {
+    competitor = await resolveCompetitor(
+      ctx,
+      sessionId,
+      turnIndex,
+      input.competitorName,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown_error";
+    await emitEvent(
+      {
+        event: "chat.error",
+        trace_id: ctx.traceId,
+        request_id: ctx.requestId,
+        session_id: sessionId,
+        turn_index: turnIndex,
+        route: "intelligence.firstInsight",
+        env: process.env.NODE_ENV,
+      },
+      {
+        error_type: "competitor_resolution_failure",
+        error_message: message,
+      },
+      {
+        level: "warn",
+      },
+    );
+  }
 
   const sourceBundle = await fetchSourceBundle(
     ctx.db,
@@ -837,43 +945,73 @@ export async function runFirstInsight(
     ["reviews", sourceBundle.reviews.status],
   ] as const;
 
-  for (const [sourceName, status] of sourceEntries) {
-    await recordToolCall(ctx, {
+  await safeSideEffect(
+    ctx,
+    {
       sessionId,
-      messageId: assistantMessageId,
       turnIndex,
-      toolName: sourceName,
-      sourceName,
-      status: status.status,
-      latencyMs: 0,
-      cacheHit: status.cacheHit,
-      sourceFreshnessSeconds: status.freshnessSeconds,
-      errorCode: status.errorCode,
-      resultJson: {
-        status: status.status,
-      },
-    });
-  }
+      operation: "record_tool_calls",
+    },
+    async () => {
+      for (const [sourceName, status] of sourceEntries) {
+        await recordToolCall(ctx, {
+          sessionId,
+          messageId: assistantMessageId,
+          turnIndex,
+          toolName: sourceName,
+          sourceName,
+          status: status.status,
+          latencyMs: 0,
+          cacheHit: status.cacheHit,
+          sourceFreshnessSeconds: status.freshnessSeconds,
+          errorCode: status.errorCode,
+          resultJson: {
+            status: status.status,
+          },
+        });
+      }
+    },
+  );
 
-  await persistRecommendations(ctx, {
-    sessionId,
-    messageId: assistantMessageId,
-    turnIndex,
-    recommendations: recommendationOutput.recommendations,
-  });
+  await safeSideEffect(
+    ctx,
+    {
+      sessionId,
+      turnIndex,
+      operation: "persist_recommendations",
+    },
+    async () => {
+      await persistRecommendations(ctx, {
+        sessionId,
+        messageId: assistantMessageId,
+        turnIndex,
+        recommendations: recommendationOutput.recommendations,
+      });
+    },
+  );
 
-  await persistReviewSignalRuns(ctx, {
-    sessionId,
-    turnIndex,
-    resolvedLocations: resolvedLocations.map((location) => ({
-      label: location.label,
-      placeId: location.placeId,
-    })),
-    reviewByLocation: sourceBundle.reviews.byLocation,
-    competitorReview: sourceBundle.competitorReview,
-    sourceStatus: sourceBundle.reviews.status,
-    distinctId: input.distinctId,
-  });
+  await safeSideEffect(
+    ctx,
+    {
+      sessionId,
+      turnIndex,
+      operation: "persist_review_signal_runs",
+    },
+    async () => {
+      await persistReviewSignalRuns(ctx, {
+        sessionId,
+        turnIndex,
+        resolvedLocations: resolvedLocations.map((location) => ({
+          label: location.label,
+          placeId: location.placeId,
+        })),
+        reviewByLocation: sourceBundle.reviews.byLocation,
+        competitorReview: sourceBundle.competitorReview,
+        sourceStatus: sourceBundle.reviews.status,
+        distinctId: input.distinctId,
+      });
+    },
+  );
 
   const usedFallback = sourceEntries.some(
     ([, status]) => status.status !== "ok",
@@ -881,66 +1019,101 @@ export async function runFirstInsight(
   const latencyMs = nowMs() - startedMs;
 
   if (usedFallback) {
-    await ctx.db.insert(chatFallbacks).values({
-      sessionId,
-      turnIndex,
-      fallbackType: "partial_data",
-      reason: "One or more sources unavailable",
-      sourcesDown: sourceEntries
-        .filter(([, status]) => status.status !== "ok")
-        .map(([source]) => source),
-      responseText: messageText,
-    });
+    await safeSideEffect(
+      ctx,
+      {
+        sessionId,
+        turnIndex,
+        operation: "persist_partial_fallback",
+      },
+      async () => {
+        await ctx.db.insert(chatFallbacks).values({
+          sessionId,
+          turnIndex,
+          fallbackType: "partial_data",
+          reason: "One or more sources unavailable",
+          sourcesDown: sourceEntries
+            .filter(([, status]) => status.status !== "ok")
+            .map(([source]) => source),
+          responseText: messageText,
+        });
+      },
+    );
   }
 
-  await ctx.db
-    .update(chatSessions)
-    .set({
-      locationCount: resolvedLocations.length,
-      firstInsightLatencyMs: latencyMs,
-      hadFallback: usedFallback,
-    })
-    .where(eq(chatSessions.id, sessionId));
+  await safeSideEffect(
+    ctx,
+    {
+      sessionId,
+      turnIndex,
+      operation: "update_chat_session",
+    },
+    async () => {
+      await ctx.db
+        .update(chatSessions)
+        .set({
+          locationCount: resolvedLocations.length,
+          firstInsightLatencyMs: latencyMs,
+          hadFallback: usedFallback,
+        })
+        .where(eq(chatSessions.id, sessionId));
+    },
+  );
 
-  await emitEvent(
+  await safeSideEffect(
+    ctx,
     {
-      event: "chat.turn.completed",
-      trace_id: ctx.traceId,
-      request_id: ctx.requestId,
-      session_id: sessionId,
-      turn_index: turnIndex,
-      route: "intelligence.firstInsight",
-      latency_ms: latencyMs,
-      card_type: input.cardType,
-      location_count: resolvedLocations.length,
-      model: MODEL_ID,
-      prompt_version: PROMPT_VERSION,
-      rule_version: RULE_VERSION,
-      used_fallback: usedFallback,
-      env: process.env.NODE_ENV,
+      sessionId,
+      turnIndex,
+      operation: "emit_turn_completed",
     },
-    {
-      recommendation_count: recommendationOutput.recommendations.length,
-      format_compliant: true,
-      source_status_weather: sourceBundle.weather.status.status,
-      source_status_events: sourceBundle.events.status.status,
-      source_status_closures: sourceBundle.closures.status.status,
-      source_status_doe: sourceBundle.doe.status.status,
-      source_status_reviews: sourceBundle.reviews.status.status,
-      source_freshness_weather_s: sourceBundle.weather.status.freshnessSeconds,
-      source_freshness_events_s: sourceBundle.events.status.freshnessSeconds,
-      source_freshness_closures_s:
-        sourceBundle.closures.status.freshnessSeconds,
-      source_freshness_reviews_s: sourceBundle.reviews.status.freshnessSeconds,
-      review_backed_recommendation_count:
-        recommendationOutput.recommendations.filter((rec) => rec.reviewBacked)
-          .length,
-      review_evidence_refs_count: recommendationOutput.recommendations.reduce(
-        (acc, rec) => acc + (rec.evidence?.topRefs.length ?? 0),
-        0,
-      ),
+    async () => {
+      await emitEvent(
+        {
+          event: "chat.turn.completed",
+          trace_id: ctx.traceId,
+          request_id: ctx.requestId,
+          session_id: sessionId,
+          turn_index: turnIndex,
+          route: "intelligence.firstInsight",
+          latency_ms: latencyMs,
+          card_type: input.cardType,
+          location_count: resolvedLocations.length,
+          model: MODEL_ID,
+          prompt_version: PROMPT_VERSION,
+          rule_version: RULE_VERSION,
+          used_fallback: usedFallback,
+          env: process.env.NODE_ENV,
+        },
+        {
+          recommendation_count: recommendationOutput.recommendations.length,
+          format_compliant: true,
+          source_status_weather: sourceBundle.weather.status.status,
+          source_status_events: sourceBundle.events.status.status,
+          source_status_closures: sourceBundle.closures.status.status,
+          source_status_doe: sourceBundle.doe.status.status,
+          source_status_reviews: sourceBundle.reviews.status.status,
+          source_freshness_weather_s:
+            sourceBundle.weather.status.freshnessSeconds,
+          source_freshness_events_s:
+            sourceBundle.events.status.freshnessSeconds,
+          source_freshness_closures_s:
+            sourceBundle.closures.status.freshnessSeconds,
+          source_freshness_reviews_s:
+            sourceBundle.reviews.status.freshnessSeconds,
+          review_backed_recommendation_count:
+            recommendationOutput.recommendations.filter(
+              (rec) => rec.reviewBacked,
+            ).length,
+          review_evidence_refs_count:
+            recommendationOutput.recommendations.reduce(
+              (acc, rec) => acc + (rec.evidence?.topRefs.length ?? 0),
+              0,
+            ),
+        },
+        { sendToPosthog: true, posthogDistinctId: input.distinctId },
+      );
     },
-    { sendToPosthog: true, posthogDistinctId: input.distinctId },
   );
 
   return {

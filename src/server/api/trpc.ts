@@ -28,7 +28,10 @@ import { getOrCreateTraceId, nowMs } from "@/server/observability/trace";
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
   const traceId = getOrCreateTraceId(opts.headers);
-  const requestId = opts.headers.get("x-request-id") ?? opts.headers.get("x-vercel-id") ?? undefined;
+  const requestId =
+    opts.headers.get("x-request-id") ??
+    opts.headers.get("x-vercel-id") ??
+    undefined;
 
   return {
     db,
@@ -96,24 +99,48 @@ const timingMiddleware = t.middleware(async ({ next, path, ctx }) => {
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
-  const result = await next();
+  try {
+    const result = await next();
 
-  const end = nowMs();
-  const latencyMs = end - start;
-  await emitEvent(
-    {
-      event: "trpc.procedure.completed",
-      trace_id: ctx.traceId,
-      request_id: ctx.requestId,
-      route: path,
-      latency_ms: latencyMs,
-      env: process.env.NODE_ENV,
-    },
-    {},
-    { level: "info" },
-  );
+    const end = nowMs();
+    const latencyMs = end - start;
+    await emitEvent(
+      {
+        event: "trpc.procedure.completed",
+        trace_id: ctx.traceId,
+        request_id: ctx.requestId,
+        route: path,
+        latency_ms: latencyMs,
+        env: process.env.NODE_ENV,
+      },
+      {},
+      { level: "info" },
+    );
 
-  return result;
+    return result;
+  } catch (error) {
+    const end = nowMs();
+    const latencyMs = end - start;
+    const message =
+      error instanceof Error ? error.message : "unknown_trpc_error";
+
+    await emitEvent(
+      {
+        event: "trpc.procedure.failed",
+        trace_id: ctx.traceId,
+        request_id: ctx.requestId,
+        route: path,
+        latency_ms: latencyMs,
+        env: process.env.NODE_ENV,
+      },
+      {
+        error_message: message,
+      },
+      { level: "warn" },
+    );
+
+    throw error;
+  }
 });
 
 /**

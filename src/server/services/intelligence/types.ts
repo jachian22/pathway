@@ -61,7 +61,12 @@ export interface ReviewEvidenceRef {
   reviewIdOrHash: string;
   publishTime: string;
   rating?: number;
-  theme: "wait_time" | "service_speed" | "host_queue" | "kitchen_delay" | "other";
+  theme:
+    | "wait_time"
+    | "service_speed"
+    | "host_queue"
+    | "kitchen_delay"
+    | "other";
   excerpt?: string;
 }
 
