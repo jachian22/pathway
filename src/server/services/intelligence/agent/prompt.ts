@@ -19,6 +19,11 @@ Return ONLY valid JSON matching this shape:
 }
 Rules:
 - Do not repeat details that already appear in action cards.
+- Make timing basis explicit from the primary driver:
+  - weather -> forecast-based window language
+  - events -> schedule-based window language
+  - closures -> closure-notice window language
+- Do not invent exact clock windows unless an event/closure tool returned explicit times.
 `.trim();
 
 export const AGENT_REPAIR_PROMPT = `

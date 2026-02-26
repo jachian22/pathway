@@ -674,6 +674,7 @@ export async function runAgentTurn(
     `Profile objective: ${cardProfile.objective}`,
     `Location labels: ${input.resolvedLocations.map((location) => location.label).join(", ")}`,
     "Goal: produce staffing/prep recommendations for next 3 days with concrete action windows.",
+    "For timing language, tie certainty to source: weather=forecast windows, events=published schedule windows, closures=closure notice windows.",
     `Signal pack summary: ${signalPackSummary}`,
     "Core signals already fetched (weather/events/closures/doe/reviews). Do not re-fetch unless you need deeper evidence for a specific claim.",
     "If uncertainty is material, ask one short follow-up question.",

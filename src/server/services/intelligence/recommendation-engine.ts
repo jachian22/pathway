@@ -117,6 +117,7 @@ function buildEventRecommendation(
   let action = `${timeWindow}: +1-2 FOH at ${input.locationLabel}`;
   const why = [
     `${event.eventName} at ${event.venueName} increases nearby foot traffic`,
+    "Timing is based on the published event schedule window.",
   ];
   const eventDate = event.startAt.slice(0, 10);
   const doeApplies = doeModifier?.date === eventDate;
@@ -188,6 +189,7 @@ function buildClosureRecommendation(
     explanation: {
       why: [
         `${closure.title}${closure.street ? ` on ${closure.street}` : ""} can block or slow access`,
+        "Timing is based on the posted closure notice window.",
       ],
       deltaReasoning:
         "Shifting delivery timing reduces service disruption risk.",
@@ -207,11 +209,11 @@ function buildWeatherRecommendation(
     return null;
 
   const timeWindow = input.weather.rainWindow
-    ? `${new Date(input.weather.rainWindow).toLocaleDateString("en-US", { weekday: "short" })} service window`
+    ? `${new Date(input.weather.rainWindow).toLocaleDateString("en-US", { weekday: "short" })} forecast weather window`
     : "Next 72h";
 
   const reason = input.weather.rainLikely
-    ? "Rain probability is elevated during service hours"
+    ? "Rain probability is elevated in forecasted service periods"
     : "Feels-like temperature is extreme during peak periods";
 
   return {
@@ -221,7 +223,10 @@ function buildWeatherRecommendation(
     confidence: "medium",
     sourceName: "weather",
     explanation: {
-      why: [reason],
+      why: [
+        reason,
+        "Timing is forecast-based and should be adjusted to your open hours.",
+      ],
       deltaReasoning:
         "Weather volatility can shift dine-in behavior and pacing.",
       escalationTrigger:
