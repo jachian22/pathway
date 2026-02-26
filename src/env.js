@@ -19,6 +19,21 @@ export const env = createEnv({
     OPENROUTER_FAST_MODEL: z.string().optional(),
     INTELLIGENCE_AGENT_MODE: z.enum(["off", "on"]).default("off"),
     INTELLIGENCE_TURN_BUDGET_MS: z.coerce.number().int().min(500).default(4500),
+    INTELLIGENCE_TURN_BUDGET_FIRST_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .default(9000),
+    INTELLIGENCE_TURN_BUDGET_FOLLOWUP_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .default(4500),
+    INTELLIGENCE_TURN_REPAIR_RESERVE_MS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .default(1200),
     INTELLIGENCE_AGENT_MAX_TOKENS_FIRST_TURN: z.coerce
       .number()
       .int()
@@ -73,6 +88,12 @@ export const env = createEnv({
     OPENROUTER_FAST_MODEL: process.env.OPENROUTER_FAST_MODEL,
     INTELLIGENCE_AGENT_MODE: process.env.INTELLIGENCE_AGENT_MODE,
     INTELLIGENCE_TURN_BUDGET_MS: process.env.INTELLIGENCE_TURN_BUDGET_MS,
+    INTELLIGENCE_TURN_BUDGET_FIRST_MS:
+      process.env.INTELLIGENCE_TURN_BUDGET_FIRST_MS,
+    INTELLIGENCE_TURN_BUDGET_FOLLOWUP_MS:
+      process.env.INTELLIGENCE_TURN_BUDGET_FOLLOWUP_MS,
+    INTELLIGENCE_TURN_REPAIR_RESERVE_MS:
+      process.env.INTELLIGENCE_TURN_REPAIR_RESERVE_MS,
     INTELLIGENCE_AGENT_MAX_TOKENS_FIRST_TURN:
       process.env.INTELLIGENCE_AGENT_MAX_TOKENS_FIRST_TURN,
     INTELLIGENCE_AGENT_MAX_TOKENS_FOLLOWUP:

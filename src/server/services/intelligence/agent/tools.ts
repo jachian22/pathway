@@ -11,9 +11,13 @@ import {
   fetchWeatherSource,
 } from "@/server/services/intelligence/sources";
 import {
+  type ClosureSignal,
+  type DoeSignal,
   type ResolvedLocation,
   type ReviewSignals,
   type SourceStatus,
+  type VenueEventSignal,
+  type WeatherSignal,
 } from "@/server/services/intelligence/types";
 import { TurnCircuitBreaker } from "@/server/services/intelligence/agent/circuit-breaker";
 
@@ -44,6 +48,15 @@ interface SourceStatusMap {
   closures: SourceStatus;
   doe: SourceStatus;
   reviews: SourceStatus;
+}
+
+export interface AgentSourceSnapshot {
+  weatherByLocation: Record<string, WeatherSignal>;
+  eventsByLocation: Record<string, VenueEventSignal[]>;
+  closuresByLocation: Record<string, ClosureSignal[]>;
+  doeDays: DoeSignal[];
+  reviewByLocation: Record<string, ReviewSignals>;
+  competitorReview: ReviewSignals | null;
 }
 
 function defaultSourceStatus(): SourceStatus {
@@ -78,6 +91,7 @@ export function createAgentTools(input: CreateAgentToolsInput): {
     byLocation: Record<string, ReviewSignals>;
     competitorReview: ReviewSignals | null;
   };
+  getSourceSnapshot: () => AgentSourceSnapshot;
   getCircuitBreakerEvents: () => ReturnType<TurnCircuitBreaker["getEvents"]>;
 } {
   const circuitBreaker = new TurnCircuitBreaker(1);
@@ -411,11 +425,19 @@ export function createAgentTools(input: CreateAgentToolsInput): {
   };
 
   const prefetchCore = async (): Promise<ToolExecution[]> => {
-    return Promise.all([
+    const baseCalls: Promise<ToolExecution>[] = [
       executeTool({ name: "get_weather", args: {} }),
       executeTool({ name: "get_events", args: {} }),
       executeTool({ name: "get_closures", args: {} }),
-    ]);
+      executeTool({ name: "get_doe", args: {} }),
+      executeTool({ name: "get_reviews", args: {} }),
+    ];
+
+    if (input.competitor.status === "resolved" && input.competitor.placeId) {
+      baseCalls.push(executeTool({ name: "get_competitor_reviews", args: {} }));
+    }
+
+    return Promise.all(baseCalls);
   };
 
   const getSourceStatuses = (): SourceStatusMap => sourceStatuses;
@@ -425,12 +447,22 @@ export function createAgentTools(input: CreateAgentToolsInput): {
     competitorReview: state.reviews?.competitorReview ?? null,
   });
 
+  const getSourceSnapshot = (): AgentSourceSnapshot => ({
+    weatherByLocation: state.weather?.byLocation ?? {},
+    eventsByLocation: state.events?.byLocation ?? {},
+    closuresByLocation: state.closures?.byLocation ?? {},
+    doeDays: state.doe?.days ?? [],
+    reviewByLocation: state.reviews?.byLocation ?? {},
+    competitorReview: state.reviews?.competitorReview ?? null,
+  });
+
   return {
     tools,
     executeTool,
     prefetchCore,
     getSourceStatuses,
     getReviewSignals,
+    getSourceSnapshot,
     getCircuitBreakerEvents: () => circuitBreaker.getEvents(),
   };
 }

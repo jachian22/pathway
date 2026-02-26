@@ -64,6 +64,9 @@ interface ChatCompletionOptions {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  responseFormat?: {
+    type: "json_object";
+  };
 }
 
 interface ModelFailure {
@@ -244,6 +247,7 @@ async function requestChatCompletion(
           messages,
           temperature: options?.temperature ?? 0.7,
           max_tokens: options?.maxTokens ?? 1024,
+          response_format: options?.responseFormat,
           tools: tools?.map((tool) => ({
             type: "function",
             function: {

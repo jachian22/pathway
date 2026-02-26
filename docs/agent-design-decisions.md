@@ -436,6 +436,35 @@ Scope: Chat agent architecture and execution policy for Restaurant Intelligence
 - Revisit when:
   - Provider mix expands and unified status taxonomy needs revision.
 
+## ADR-023: Two-stage signal compression + strict JSON composer for agent mode
+
+- Status: Accepted
+- Decision:
+  - Use a two-stage response path in agent mode:
+    - Stage A: deterministic source normalization (`signal_pack`) with LLM summary as the primary summarizer and deterministic summary as fallback.
+    - Stage B: strict JSON composition from compact signals.
+  - Enforce JSON output at provider request level (`response_format: json_object`) for loop, compose retry, and repair calls.
+  - Always prefetch DOE and reviews on first insight, alongside weather/events/closures.
+  - Use split turn budgets with a higher first-turn budget and reserved repair budget.
+  - Auto-retry composition on truncation/parse failures before conservative fallback.
+- Why:
+  - Prevent repeated truncation and schema-parse failures caused by large raw tool payload context.
+  - Preserve agentic synthesis quality while reducing token overhead in final structured output.
+  - Improve first-turn completeness without relying on secondary tool loops.
+- Alternatives considered:
+  - Single-pass loop-only generation with prompt-only JSON constraints.
+  - Deterministic-only summarization with no LLM compression layer.
+  - Ask-user manual retry instead of automatic compose retry.
+- Tradeoffs:
+  - Additional orchestration complexity and one extra summarization call in some turns.
+  - First turn may be slightly slower, but materially more reliable.
+- Guardrails:
+  - Preserve hard limits on rounds/tool calls.
+  - Keep fallback behavior conservative when compose+repair still fail.
+  - Maintain enriched diagnostics on loop finish reason, token usage, and failure stage/codes.
+- Revisit when:
+  - Shadow mode is implemented and we can compare two-stage vs loop-only quality/latency at scale.
+
 ## Open Questions (Next Design Session)
 
 1. Persona-specific variants after default balanced mode is stable (owner vs ops manager).

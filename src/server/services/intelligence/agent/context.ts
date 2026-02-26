@@ -54,10 +54,16 @@ export function buildSessionMemoryContext(input: AgentMemoryInput): string {
 export function buildCompiledAgentContext(
   input: AgentMemoryInput,
 ): CompiledAgentContext {
+  const maxConfiguredTurnBudgetMs = Math.max(
+    env.INTELLIGENCE_TURN_BUDGET_MS,
+    env.INTELLIGENCE_TURN_BUDGET_FIRST_MS,
+    env.INTELLIGENCE_TURN_BUDGET_FOLLOWUP_MS,
+  );
+
   return {
     identityContext:
       "Mission: provide concrete staffing/prep recommendations for NYC restaurants over next 3 days.",
-    toolContractContext: `Hard limits: max 8 tool calls, max 2 rounds, max ${env.INTELLIGENCE_TURN_BUDGET_MS}ms turn budget, no fabricated claims.`,
+    toolContractContext: `Hard limits: max 8 tool calls, max 2 rounds, max ${maxConfiguredTurnBudgetMs}ms turn budget, no fabricated claims.`,
     sessionMemoryContext: buildSessionMemoryContext(input),
     promptVersion: AGENT_PROMPT_VERSION,
     toolContractVersion: AGENT_TOOL_CONTRACT_VERSION,

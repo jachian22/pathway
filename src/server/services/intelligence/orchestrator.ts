@@ -1228,6 +1228,7 @@ async function runFirstInsightUnlocked(
     if (shouldFallbackToDeterministic) {
       agentFallbackApplied = true;
       agentFallbackReason =
+        agentOutput.rootFailureCode ??
         agentOutput.failureReason ??
         "agent_returned_system_only_recommendations";
       agentFallbackRepairFailureReason = agentOutput.repairFailureReason;
@@ -1347,7 +1348,10 @@ async function runFirstInsightUnlocked(
         "AGENT_TURN_BUDGET_EXCEEDED",
       )
         ? "I hit a timing cap while generating this pass. Want me to retry now with the same locations?"
-        : undefined;
+        : agentOutput.rootFailureCode === "AGENT_RESPONSE_TRUNCATED" ||
+            agentOutput.diagnostics.toolLoop?.finalFinishReason === "length"
+          ? "I hit a response-length limit while generating this pass. Want me to retry with a shorter summary?"
+          : undefined;
 
       messageText = buildMessage({
         summary: recommendationOutput.summary,
