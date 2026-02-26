@@ -15,32 +15,9 @@ export const AGENT_OUTPUT_PROMPT = `
 Return ONLY valid JSON matching this shape:
 {
   "narrative": "max 2 short sentences, <= 45 words",
-  "recommendations": [
-    {
-      "locationLabel": "string",
-      "action": "string",
-      "timeWindow": "string",
-      "confidence": "low|medium|high",
-      "sourceName": "weather|events|closures|doe|reviews|system",
-      "why": ["string", "string"],
-      "deltaReasoning": "string",
-      "escalationTrigger": "string",
-      "reviewBacked": false,
-      "citations": [
-        {
-          "sourceName": "weather|events|closures|doe|reviews|system",
-          "freshnessSeconds": 0,
-          "note": "string"
-        }
-      ]
-    }
-  ],
-  "assumptions": ["string"],
   "followUpQuestion": "optional short question <= 16 words"
 }
 Rules:
-- Keep recommendations to 1-3 items.
-- Keep why bullets concise and concrete.
 - Do not repeat details that already appear in action cards.
 `.trim();
 

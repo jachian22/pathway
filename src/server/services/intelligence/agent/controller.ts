@@ -21,6 +21,7 @@ import {
   chatCompletion,
   chatCompletionWithTools,
 } from "@/server/services/openrouter";
+import { buildRecommendations } from "@/server/services/intelligence/recommendation-engine";
 import {
   type CardType,
   type Recommendation,
@@ -135,6 +136,7 @@ const MAX_REPAIR_TIMEOUT_MS = 1200;
 const MIN_REPAIR_BUDGET_MS = 300;
 const SIGNAL_PACK_SUMMARY_TIMEOUT_MS = 700;
 const SIGNAL_PACK_SUMMARY_MAX_TOKENS = 220;
+const NARRATIVE_MAX_TOKENS = 260;
 
 interface SignalPackLocation {
   locationLabel: string;
@@ -382,7 +384,11 @@ function inferFailureCode(error: unknown): string {
   if (message.includes("AGENT_REPAIR_TIMEOUT_LOCAL")) {
     return "AGENT_REPAIR_TIMEOUT_LOCAL";
   }
-  if (message.includes("Unexpected token")) {
+  if (
+    message.includes("Unexpected token") ||
+    message.includes("JSON at position") ||
+    message.includes("after array element in JSON")
+  ) {
     return "AGENT_RESPONSE_INVALID_JSON";
   }
   if (message.includes("ZodError") || isZodError) {
@@ -414,6 +420,8 @@ function inferFailureStage(error: unknown): AgentFailureStage {
   }
   if (
     message.includes("Unexpected token") ||
+    message.includes("JSON at position") ||
+    message.includes("after array element in JSON") ||
     message.includes("ZodError") ||
     isZodError
   ) {
@@ -466,25 +474,6 @@ function shouldSkipRepairForProviderEmpty(reason?: string): boolean {
   );
 }
 
-function mapCardIntro(cardType: CardType): string {
-  if (cardType === "risk")
-    return "Next 3 days risk signals for your locations:";
-  if (cardType === "opportunity")
-    return "Next 3 days opportunity signals for your locations:";
-  return "Next 3 days staffing and prep signals for your locations:";
-}
-
-function buildSummary(
-  cardType: CardType,
-  recommendations: Recommendation[],
-): string {
-  const lines = [mapCardIntro(cardType)];
-  for (const recommendation of recommendations.slice(0, 4)) {
-    lines.push(`- ${recommendation.action} (${recommendation.confidence})`);
-  }
-  return lines.join("\n");
-}
-
 function buildMessage(params: {
   narrative: string;
   recommendations: Recommendation[];
@@ -501,25 +490,6 @@ function buildMessage(params: {
     lines.push("", params.followUpQuestion);
   }
   return lines.join("\n");
-}
-
-function buildSnapshots(
-  resolvedLocations: ResolvedLocation[],
-  reviewByLocation: Record<string, ReviewSignals>,
-): Snapshot[] {
-  return resolvedLocations
-    .map((location) => {
-      const signal = reviewByLocation[location.label];
-      if (!signal || signal.evidenceCount === 0) return null;
-      return {
-        locationLabel: location.label,
-        text: signal.guestSnapshot,
-        sampleReviewCount: signal.sampleReviewCount,
-        recencyWindowDays: signal.recencyWindowDays,
-        confidence: signal.confidence,
-      };
-    })
-    .filter((value): value is Snapshot => value !== null);
 }
 
 function fallbackRecommendation(locationLabel: string): Recommendation {
@@ -580,6 +550,10 @@ export async function runAgentTurn(
   const maxTokensForTurn = isFirstTurn
     ? env.INTELLIGENCE_AGENT_MAX_TOKENS_FIRST_TURN
     : env.INTELLIGENCE_AGENT_MAX_TOKENS_FOLLOWUP;
+  const maxTokensForNarrative = Math.min(
+    maxTokensForTurn,
+    NARRATIVE_MAX_TOKENS,
+  );
   const modelOverride = isFirstTurn
     ? (env.OPENROUTER_FAST_MODEL ?? undefined)
     : undefined;
@@ -686,7 +660,7 @@ export async function runAgentTurn(
       {
         model: modelOverride,
         temperature: 0.1,
-        maxTokens: maxTokensForTurn,
+        maxTokens: maxTokensForNarrative,
         timeoutMs,
         responseFormat: { type: "json_object" },
       },
@@ -725,7 +699,7 @@ export async function runAgentTurn(
       options: {
         model: modelOverride,
         temperature: 0.2,
-        maxTokens: maxTokensForTurn,
+        maxTokens: maxTokensForNarrative,
         responseFormat: { type: "json_object" },
       },
       deadlineMs: loopDeadlineMs,
@@ -844,53 +818,48 @@ export async function runAgentTurn(
         });
       }
     }
-
-    parsed ??= {
-      narrative:
-        "Live model synthesis is temporarily unavailable, so I am using a conservative operating fallback.",
-      recommendations: [
-        {
-          locationLabel: firstLocationLabel ?? "your locations",
-          action:
-            "Next 24h: run standard staffing and prep, keep delivery timing flexible, and recheck in 30 minutes",
-          timeWindow: "Next 24h",
-          confidence: "low",
-          sourceName: "system",
-          why: ["Live model/tool synthesis failed for this turn."],
-          deltaReasoning: "Fallback keeps operations stable under uncertainty.",
-          escalationTrigger:
-            "Escalate only if live service indicators exceed baseline.",
-          reviewBacked: false,
-          citations: [
-            {
-              sourceName: "system",
-              note: "agent fallback",
-            },
-          ],
-        },
-      ],
-      assumptions: ["Fallback applied due to agent synthesis failure."],
-      followUpQuestion:
-        "Want me to retry now with the same locations and baseline?",
-    };
   }
 
   const reviewSignals = tools.getReviewSignals();
   const sourceStatuses = tools.getSourceStatuses();
+  const sourceSnapshot = tools.getSourceSnapshot();
+  const deterministicOutput = buildRecommendations(
+    input.cardType,
+    input.resolvedLocations.map((location, index) => ({
+      locationLabel: location.label,
+      weather: sourceSnapshot.weatherByLocation[location.label],
+      events: sourceSnapshot.eventsByLocation[location.label],
+      closures: sourceSnapshot.closuresByLocation[location.label],
+      review: sourceSnapshot.reviewByLocation[location.label],
+      baselineFoh: input.baselineByLocation.get(location.label),
+      baselineAssumed:
+        input.baselineAssumedForFirstLocation && index === 0
+          ? !input.baselineByLocation.has(location.label)
+          : false,
+    })),
+    {
+      doeDays: sourceSnapshot.doeDays,
+    },
+  );
+
+  const failureFollowUpQuestion =
+    rootFailureCode === "AGENT_RESPONSE_TRUNCATED" ||
+    toolLoopDiagnostics?.finalFinishReason === "length"
+      ? "Want me to retry with a shorter summary?"
+      : rootFailureCode === "AGENT_TURN_BUDGET_EXCEEDED"
+        ? "Want me to retry now with the same locations?"
+        : undefined;
+
   const policyStartedAtMs = Date.now();
   let policyApplied: ReturnType<typeof applyAgentPolicy>;
   try {
     policyApplied = applyAgentPolicy({
       cardType: input.cardType,
-      parsed: parsed ?? {
-        narrative: "Conservative fallback due to missing model output.",
-        recommendations: [],
-        assumptions: [],
-      },
+      recommendations: deterministicOutput.recommendations,
+      followUpQuestion: parsed?.followUpQuestion ?? failureFollowUpQuestion,
       sourceStatusByName: sourceStatuses,
       firstLocationLabel,
       baselineAssumedForFirstLocation: input.baselineAssumedForFirstLocation,
-      reviewByLocation: reviewSignals.byLocation,
     });
     phaseTelemetry.push({
       phase: "policy",
@@ -935,13 +904,10 @@ export async function runAgentTurn(
   });
 
   return {
-    summary: buildSummary(input.cardType, recommendations),
+    summary: deterministicOutput.summary,
     message,
     recommendations,
-    snapshots: buildSnapshots(
-      input.resolvedLocations,
-      reviewSignals.byLocation,
-    ),
+    snapshots: deterministicOutput.snapshots,
     competitorSnapshot: undefined,
     sources: sourceStatuses,
     toolExecutions,
