@@ -24,6 +24,8 @@ function FollowUpComposerBase(props: FollowUpComposerProps) {
         }}
       >
         <input
+          id="chat-follow-up"
+          name="follow_up_message"
           className="chat-input"
           placeholder="Example: We usually run 4 FOH on Tuesday nights"
           value={draft}

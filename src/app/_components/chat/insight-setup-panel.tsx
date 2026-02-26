@@ -59,6 +59,7 @@ function InsightSetupPanelBase(props: InsightSetupPanelProps) {
       </label>
       <textarea
         id="locations"
+        name="locations"
         className="chat-input-multiline mt-2 min-h-[112px]"
         placeholder="Paste addresses, ZIPs, or neighborhoods (one per line or comma separated)"
         value={locationsDraft}
@@ -101,6 +102,7 @@ function InsightSetupPanelBase(props: InsightSetupPanelProps) {
         </label>
         <input
           id="competitor"
+          name="competitor"
           className="chat-input mt-2"
           placeholder="Name one competitor restaurant"
           value={competitorDraft}

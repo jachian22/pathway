@@ -31,6 +31,8 @@ export function LatestPost() {
         className="flex flex-col gap-2"
       >
         <input
+          id="post-title"
+          name="title"
           type="text"
           placeholder="Title"
           value={name}
