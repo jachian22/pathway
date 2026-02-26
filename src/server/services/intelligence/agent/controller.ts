@@ -5,7 +5,6 @@ import { applyAgentPolicy } from "@/server/services/intelligence/agent/policy";
 import {
   AGENT_IDENTITY_PROMPT,
   AGENT_OUTPUT_PROMPT,
-  AGENT_REPAIR_PROMPT,
   AGENT_TOOL_POLICY_PROMPT,
 } from "@/server/services/intelligence/agent/prompt";
 import { type AgentResponse } from "@/server/services/intelligence/agent/schema";
@@ -412,6 +411,9 @@ function inferFailureCode(error: unknown): string {
   if (message.includes("AGENT_RESPONSE_TRUNCATED")) {
     return "AGENT_RESPONSE_TRUNCATED";
   }
+  if (message.includes("AGENT_REPAIR_TIMEOUT_LOCAL")) {
+    return "AGENT_REPAIR_TIMEOUT_LOCAL";
+  }
   if (message.includes("Unexpected token")) {
     return "AGENT_RESPONSE_INVALID_JSON";
   }
@@ -457,6 +459,35 @@ function inferFailureStage(error: unknown): AgentFailureStage {
 
 function remainingBudgetMs(deadlineMs: number): number {
   return Math.max(0, deadlineMs - Date.now());
+}
+
+async function withLocalTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutCode: string,
+): Promise<T> {
+  if (timeoutMs <= 0) {
+    throw new Error("AGENT_TURN_BUDGET_EXCEEDED");
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    const handle = setTimeout(() => {
+      reject(new Error(timeoutCode));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(handle);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(handle);
+        reject(
+          error instanceof Error ? error : new Error(String(error ?? "error")),
+        );
+      },
+    );
+  });
 }
 
 function shouldSkipRepairForProviderEmpty(reason?: string): boolean {
@@ -602,18 +633,6 @@ export async function runAgentTurn(
   input: AgentTurnInput,
 ): Promise<AgentTurnOutput> {
   const firstLocationLabel = input.resolvedLocations[0]?.label;
-  const memoryPayload = {
-    sessionId: input.sessionId,
-    turnIndex: input.turnIndex,
-    cardType: input.cardType,
-    locations: input.resolvedLocations.map((location) => ({
-      label: location.label,
-      placeId: location.placeId,
-    })),
-    baselines: Object.fromEntries(input.baselineByLocation.entries()),
-    baselineAssumedForFirstLocation: input.baselineAssumedForFirstLocation,
-    competitorName: input.competitorName ?? null,
-  };
 
   const context = buildCompiledAgentContext({
     sessionId: input.sessionId,
@@ -628,7 +647,6 @@ export async function runAgentTurn(
   const tools = createAgentTools({
     db: input.db,
     resolvedLocations: input.resolvedLocations,
-    memoryPayload,
     competitor: input.competitor,
   });
 
@@ -879,9 +897,14 @@ export async function runAgentTurn(
     } else {
       repairAttempted = true;
       try {
-        parsed = await composeFromSignalPack(
-          reason,
-          Math.min(budgetLeftForRepairMs, MAX_REPAIR_TIMEOUT_MS),
+        const composeTimeoutMs = Math.min(
+          budgetLeftForRepairMs,
+          MAX_REPAIR_TIMEOUT_MS,
+        );
+        parsed = await withLocalTimeout(
+          composeFromSignalPack(reason, composeTimeoutMs),
+          composeTimeoutMs + 150,
+          "AGENT_REPAIR_TIMEOUT_LOCAL",
         );
         parseOk = true;
         repairOk = true;
@@ -891,69 +914,20 @@ export async function runAgentTurn(
           durationMs: Date.now() - repairStartedAtMs,
         });
       } catch (composeError) {
-        const budgetForLegacyRepairMs = remainingBudgetMs(turnDeadlineMs);
-        if (budgetForLegacyRepairMs < MIN_REPAIR_BUDGET_MS) {
-          degraded = true;
-          repairFailureReason = "AGENT_TURN_BUDGET_EXCEEDED";
-          repairFailureStage = "repair";
-          repairFailureCode = "AGENT_TURN_BUDGET_EXCEEDED";
-          phaseTelemetry.push({
-            phase: "repair",
-            status: "error",
-            durationMs: Date.now() - repairStartedAtMs,
-            failureStage: repairFailureStage,
-            failureCode: repairFailureCode,
-          });
-        } else {
-          try {
-            const repaired = await chatCompletion(
-              [
-                {
-                  role: "system",
-                  content: `${systemPrompt}\n\n${AGENT_REPAIR_PROMPT}`,
-                },
-                {
-                  role: "user",
-                  content: `Validation/tool loop failed with: ${reason}\nOutput to repair:\n${rawContent || "(none)"}`,
-                },
-              ],
-              {
-                temperature: 0.1,
-                maxTokens: env.INTELLIGENCE_AGENT_MAX_TOKENS_REPAIR,
-                timeoutMs: Math.min(
-                  budgetForLegacyRepairMs,
-                  MAX_REPAIR_TIMEOUT_MS,
-                ),
-                responseFormat: { type: "json_object" },
-              },
-            );
-            parsed = parseAgentResponse(repaired);
-            parseOk = true;
-            repairOk = true;
-            phaseTelemetry.push({
-              phase: "repair",
-              status: "ok",
-              durationMs: Date.now() - repairStartedAtMs,
-            });
-          } catch (repairError) {
-            degraded = true;
-            repairFailureReason =
-              repairError instanceof Error
-                ? repairError.message
-                : composeError instanceof Error
-                  ? composeError.message
-                  : "unknown_repair_error";
-            repairFailureStage = "repair";
-            repairFailureCode ??= inferFailureCode(repairError);
-            phaseTelemetry.push({
-              phase: "repair",
-              status: "error",
-              durationMs: Date.now() - repairStartedAtMs,
-              failureStage: repairFailureStage,
-              failureCode: repairFailureCode,
-            });
-          }
-        }
+        degraded = true;
+        repairFailureReason =
+          composeError instanceof Error
+            ? composeError.message
+            : "unknown_repair_error";
+        repairFailureStage = "repair";
+        repairFailureCode ??= inferFailureCode(composeError);
+        phaseTelemetry.push({
+          phase: "repair",
+          status: "error",
+          durationMs: Date.now() - repairStartedAtMs,
+          failureStage: repairFailureStage,
+          failureCode: repairFailureCode,
+        });
       }
     }
 

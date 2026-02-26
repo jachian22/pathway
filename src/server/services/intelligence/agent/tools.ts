@@ -30,7 +30,6 @@ interface CompetitorContext {
 interface CreateAgentToolsInput {
   db: DbClient;
   resolvedLocations: ResolvedLocation[];
-  memoryPayload: Record<string, unknown>;
   competitor: CompetitorContext;
 }
 
@@ -166,16 +165,6 @@ export function createAgentTools(input: CreateAgentToolsInput): {
 
   const tools: ToolDefinition[] = [
     {
-      name: "get_memory",
-      description:
-        "Read current session memory including locations, baseline staffing, card type, and assumptions.",
-      parameters: {
-        type: "object",
-        additionalProperties: false,
-        properties: {},
-      },
-    },
-    {
       name: "get_weather",
       description:
         "Get weather signal for a location for the next 3 days (rain and temperature extremes).",
@@ -258,17 +247,6 @@ export function createAgentTools(input: CreateAgentToolsInput): {
     name: string;
     args: Record<string, unknown>;
   }): Promise<ToolExecution> => {
-    if (params.name === "get_memory") {
-      return {
-        toolName: params.name,
-        sourceName: "system",
-        args: params.args,
-        status: "ok",
-        latencyMs: 0,
-        result: input.memoryPayload,
-      };
-    }
-
     if (params.name === "get_weather") {
       const locationLabel = pickLocationLabel(
         params.args,

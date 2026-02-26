@@ -8,6 +8,7 @@ export const AGENT_TOOL_POLICY_PROMPT = `
 Use tools before making factual claims.
 Never fabricate events, weather, closures, DOE calendar facts, or review evidence.
 Keep tool usage bounded and relevant to the user's request.
+Session memory is already included in prompt context; do not spend tool calls re-reading memory.
 `.trim();
 
 export const AGENT_OUTPUT_PROMPT = `
