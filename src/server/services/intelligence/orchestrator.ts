@@ -1061,7 +1061,12 @@ async function runFirstInsightUnlocked(
             tool_contract_version: agentOutput.promptMeta.toolContractVersion,
             policy_version: agentOutput.promptMeta.policyVersion,
             policy_caps_applied: agentOutput.policyCapsApplied,
-            tool_call_count: toolExecutions.length,
+            tool_call_count:
+              agentOutput.diagnostics.prefetchToolCallCount +
+              agentOutput.diagnostics.loopToolCallCount,
+            prefetch_tool_call_count:
+              agentOutput.diagnostics.prefetchToolCallCount,
+            loop_tool_call_count: agentOutput.diagnostics.loopToolCallCount,
             assumptions_count: agentOutput.assumptions.length,
             degraded: agentOutput.degraded,
             failure_reason: agentOutput.failureReason,
@@ -1552,6 +1557,7 @@ async function runFirstInsightUnlocked(
   const usedFallback = sourceEntries.some(
     ([, status]) => status.status !== "ok",
   );
+  const usedAnyFallback = usedFallback || agentFallbackApplied;
   const latencyMs = nowMs() - startedMs;
   const sourceStatusMap = Object.fromEntries(sourceEntries) as Record<
     "weather" | "events" | "closures" | "doe" | "reviews",
@@ -1599,7 +1605,7 @@ async function runFirstInsightUnlocked(
         .set({
           locationCount: resolvedLocations.length,
           firstInsightLatencyMs: latencyMs,
-          hadFallback: usedFallback,
+          hadFallback: usedAnyFallback,
         })
         .where(eq(chatSessions.id, sessionId));
     },
@@ -1625,9 +1631,15 @@ async function runFirstInsightUnlocked(
           card_type: input.cardType,
           location_count: resolvedLocations.length,
           model: MODEL_ID,
-          prompt_version: PROMPT_VERSION,
-          rule_version: RULE_VERSION,
-          used_fallback: usedFallback,
+          prompt_version:
+            useAgentMode && agentOutputForTelemetry
+              ? agentOutputForTelemetry.promptMeta.promptVersion
+              : PROMPT_VERSION,
+          rule_version:
+            useAgentMode && agentOutputForTelemetry
+              ? agentOutputForTelemetry.promptMeta.policyVersion
+              : RULE_VERSION,
+          used_fallback: usedAnyFallback,
           env: process.env.NODE_ENV,
         },
         {
@@ -1643,6 +1655,24 @@ async function runFirstInsightUnlocked(
           source_freshness_closures_s:
             sourceStatusMap.closures.freshnessSeconds,
           source_freshness_reviews_s: sourceStatusMap.reviews.freshnessSeconds,
+          agent_source_status_weather:
+            agentOutputForTelemetry?.sources.weather.status,
+          agent_source_status_events:
+            agentOutputForTelemetry?.sources.events.status,
+          agent_source_status_closures:
+            agentOutputForTelemetry?.sources.closures.status,
+          agent_source_status_doe: agentOutputForTelemetry?.sources.doe.status,
+          agent_source_status_reviews:
+            agentOutputForTelemetry?.sources.reviews.status,
+          final_source_status_weather: sourceStatusMap.weather.status,
+          final_source_status_events: sourceStatusMap.events.status,
+          final_source_status_closures: sourceStatusMap.closures.status,
+          final_source_status_doe: sourceStatusMap.doe.status,
+          final_source_status_reviews: sourceStatusMap.reviews.status,
+          prefetch_tool_call_count:
+            agentOutputForTelemetry?.diagnostics.prefetchToolCallCount,
+          loop_tool_call_count:
+            agentOutputForTelemetry?.diagnostics.loopToolCallCount,
           review_backed_recommendation_count:
             recommendationOutput.recommendations.filter(
               (rec) => rec.reviewBacked,
@@ -1668,6 +1698,16 @@ async function runFirstInsightUnlocked(
       },
       async () => {
         const loopDiagnostics = agentOutputForTelemetry.diagnostics.toolLoop;
+        const combinedToolCallsByName: Record<string, number> = {
+          ...agentOutputForTelemetry.diagnostics.prefetchToolCallsByName,
+        };
+        for (const [name, count] of Object.entries(
+          agentOutputForTelemetry.diagnostics.loopToolCallsByName,
+        )) {
+          combinedToolCallsByName[name] =
+            (combinedToolCallsByName[name] ?? 0) + count;
+        }
+
         await emitEvent(
           {
             event: "agent.turn.wide",
@@ -1681,8 +1721,8 @@ async function runFirstInsightUnlocked(
             location_count: resolvedLocations.length,
             model: MODEL_ID,
             prompt_version: agentOutputForTelemetry.promptMeta.promptVersion,
-            rule_version: RULE_VERSION,
-            used_fallback: usedFallback || agentFallbackApplied,
+            rule_version: agentOutputForTelemetry.promptMeta.policyVersion,
+            used_fallback: usedAnyFallback,
             env: process.env.NODE_ENV,
           },
           {
@@ -1694,8 +1734,17 @@ async function runFirstInsightUnlocked(
             final_model: loopDiagnostics?.finalModel,
             loop_rounds: loopDiagnostics?.roundsExecuted,
             tool_call_count:
-              loopDiagnostics?.toolCallCount ?? toolExecutions.length,
-            tool_calls_by_name: loopDiagnostics?.toolCallsByName ?? {},
+              agentOutputForTelemetry.diagnostics.prefetchToolCallCount +
+              agentOutputForTelemetry.diagnostics.loopToolCallCount,
+            tool_calls_by_name: combinedToolCallsByName,
+            prefetch_tool_call_count:
+              agentOutputForTelemetry.diagnostics.prefetchToolCallCount,
+            prefetch_tool_calls_by_name:
+              agentOutputForTelemetry.diagnostics.prefetchToolCallsByName,
+            loop_tool_call_count:
+              agentOutputForTelemetry.diagnostics.loopToolCallCount,
+            loop_tool_calls_by_name:
+              agentOutputForTelemetry.diagnostics.loopToolCallsByName,
             loop_unknown_tool_count: loopDiagnostics?.unknownToolCount ?? 0,
             loop_arg_parse_failure_count:
               loopDiagnostics?.argParseFailureCount ?? 0,
@@ -1714,6 +1763,20 @@ async function runFirstInsightUnlocked(
             fallback_applied: agentFallbackApplied,
             fallback_reason: agentFallbackReason,
             fallback_repair_failure_reason: agentFallbackRepairFailureReason,
+            agent_source_status_weather:
+              agentOutputForTelemetry.sources.weather.status,
+            agent_source_status_events:
+              agentOutputForTelemetry.sources.events.status,
+            agent_source_status_closures:
+              agentOutputForTelemetry.sources.closures.status,
+            agent_source_status_doe: agentOutputForTelemetry.sources.doe.status,
+            agent_source_status_reviews:
+              agentOutputForTelemetry.sources.reviews.status,
+            final_source_status_weather: sourceStatusMap.weather.status,
+            final_source_status_events: sourceStatusMap.events.status,
+            final_source_status_closures: sourceStatusMap.closures.status,
+            final_source_status_doe: sourceStatusMap.doe.status,
+            final_source_status_reviews: sourceStatusMap.reviews.status,
             source_status_weather: sourceStatusMap.weather.status,
             source_status_events: sourceStatusMap.events.status,
             source_status_closures: sourceStatusMap.closures.status,
@@ -1722,7 +1785,7 @@ async function runFirstInsightUnlocked(
           },
           {
             level:
-              usedFallback ||
+              usedAnyFallback ||
               agentFallbackApplied ||
               agentOutputForTelemetry.degraded
                 ? "warn"
@@ -1749,7 +1812,7 @@ async function runFirstInsightUnlocked(
       doe: sourceStatusMap.doe,
       reviews: sourceStatusMap.reviews,
     },
-    usedFallback,
+    usedFallback: usedAnyFallback,
     firstInsightLatencyMs: latencyMs,
     invalidLocations: parsedLocations.invalid,
   };

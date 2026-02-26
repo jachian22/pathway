@@ -12,6 +12,7 @@ import { parseAgentResponse } from "@/server/services/intelligence/agent/schema"
 import { createAgentTools } from "@/server/services/intelligence/agent/tools";
 import {
   type ToolExecution,
+  ToolLoopError,
   type ToolLoopDiagnostics,
   chatCompletion,
   chatCompletionWithTools,
@@ -123,9 +124,17 @@ export interface AgentTurnOutput {
     repairAttempted: boolean;
     repairOk: boolean;
     toolLoop?: ToolLoopDiagnostics;
+    prefetchToolCallCount: number;
+    prefetchToolCallsByName: Record<string, number>;
+    loopToolCallCount: number;
+    loopToolCallsByName: Record<string, number>;
   };
   phaseTelemetry: AgentPhaseTelemetry[];
 }
+
+const TURN_BUDGET_MS = 4500;
+const MAX_REPAIR_TIMEOUT_MS = 1200;
+const MIN_REPAIR_BUDGET_MS = 300;
 
 function inferFailureCode(error: unknown): string {
   const message =
@@ -140,6 +149,12 @@ function inferFailureCode(error: unknown): string {
   }
   if (message.includes("AGENT_TOOL_ROUND_LIMIT_REACHED")) {
     return "AGENT_TOOL_ROUND_LIMIT_REACHED";
+  }
+  if (message.includes("AGENT_TURN_BUDGET_EXCEEDED")) {
+    return "AGENT_TURN_BUDGET_EXCEEDED";
+  }
+  if (message.includes("AGENT_REPAIR_SKIPPED_PROVIDER_EMPTY")) {
+    return "AGENT_REPAIR_SKIPPED_PROVIDER_EMPTY";
   }
   if (message.includes("AGENT_RESPONSE_NO_JSON")) {
     return "AGENT_RESPONSE_NO_JSON";
@@ -166,7 +181,8 @@ function inferFailureStage(error: unknown): AgentFailureStage {
   const isZodError = error instanceof Error && error.name === "ZodError";
   if (
     message.includes("AGENT_TOOL_CALL_LIMIT_REACHED") ||
-    message.includes("AGENT_TOOL_ROUND_LIMIT_REACHED")
+    message.includes("AGENT_TOOL_ROUND_LIMIT_REACHED") ||
+    message.includes("AGENT_TURN_BUDGET_EXCEEDED")
   ) {
     return "tool_loop";
   }
@@ -184,6 +200,18 @@ function inferFailureStage(error: unknown): AgentFailureStage {
     return "provider";
   }
   return "provider";
+}
+
+function remainingBudgetMs(deadlineMs: number): number {
+  return Math.max(0, deadlineMs - Date.now());
+}
+
+function shouldSkipRepairForProviderEmpty(reason?: string): boolean {
+  if (!reason) return false;
+  return (
+    reason.includes("missing final content") ||
+    reason.includes("No response content from OpenRouter")
+  );
 }
 
 function mapCardIntro(cardType: CardType): string {
@@ -351,9 +379,17 @@ export async function runAgentTurn(
     competitor: input.competitor,
   });
 
+  const turnStartedAtMs = Date.now();
+  const turnDeadlineMs = turnStartedAtMs + TURN_BUDGET_MS;
   const phaseTelemetry: AgentPhaseTelemetry[] = [];
   const prefetchStartedAtMs = Date.now();
   const prefetchExecutions = await tools.prefetchCore();
+  const prefetchToolCallsByName = prefetchExecutions.reduce<
+    Record<string, number>
+  >((acc, execution) => {
+    acc[execution.toolName] = (acc[execution.toolName] ?? 0) + 1;
+    return acc;
+  }, {});
   phaseTelemetry.push({
     phase: "prefetch_core",
     status: "ok",
@@ -404,6 +440,7 @@ export async function runAgentTurn(
       executeTool: tools.executeTool,
       maxRounds: 2,
       maxToolCalls: 8,
+      deadlineMs: turnDeadlineMs,
       options: {
         temperature: 0.2,
         maxTokens: 1200,
@@ -419,6 +456,9 @@ export async function runAgentTurn(
     });
   } catch (error) {
     llmLoopError = error;
+    if (error instanceof ToolLoopError) {
+      toolLoopDiagnostics = error.diagnostics;
+    }
     failureReason = error instanceof Error ? error.message : "unknown_error";
     failureCode = inferFailureCode(error);
     failureStage = inferFailureStage(error);
@@ -457,43 +497,20 @@ export async function runAgentTurn(
   }
 
   if (llmLoopError) {
-    repairAttempted = true;
-    const repairStartedAtMs = Date.now();
     const reason =
       llmLoopError instanceof Error ? llmLoopError.message : "unknown_error";
-    try {
-      const repaired = await chatCompletion(
-        [
-          {
-            role: "system",
-            content: `${systemPrompt}\n\n${AGENT_REPAIR_PROMPT}`,
-          },
-          {
-            role: "user",
-            content: `Validation/tool loop failed with: ${reason}\nOutput to repair:\n${rawContent || "(none)"}`,
-          },
-        ],
-        {
-          temperature: 0.1,
-          maxTokens: 1200,
-        },
-      );
-      parsed = parseAgentResponse(repaired);
-      parseOk = true;
-      repairOk = true;
-      phaseTelemetry.push({
-        phase: "repair",
-        status: "ok",
-        durationMs: Date.now() - repairStartedAtMs,
-      });
-    } catch (repairError) {
+    const repairStartedAtMs = Date.now();
+    const budgetLeftForRepairMs = remainingBudgetMs(turnDeadlineMs);
+    const skipForProviderEmpty = shouldSkipRepairForProviderEmpty(reason);
+    const skipForBudget = budgetLeftForRepairMs < MIN_REPAIR_BUDGET_MS;
+
+    if (skipForProviderEmpty || skipForBudget) {
       degraded = true;
-      repairFailureReason =
-        repairError instanceof Error
-          ? repairError.message
-          : "unknown_repair_error";
-      failureCode ??= inferFailureCode(repairError);
+      repairFailureReason = skipForProviderEmpty
+        ? "AGENT_REPAIR_SKIPPED_PROVIDER_EMPTY"
+        : "AGENT_TURN_BUDGET_EXCEEDED";
       failureStage = "repair";
+      failureCode ??= repairFailureReason;
       phaseTelemetry.push({
         phase: "repair",
         status: "error",
@@ -501,36 +518,80 @@ export async function runAgentTurn(
         failureStage,
         failureCode,
       });
-      parsed = {
-        narrative:
-          "Live model synthesis is temporarily unavailable, so I am using a conservative operating fallback.",
-        recommendations: [
+    } else {
+      repairAttempted = true;
+      try {
+        const repaired = await chatCompletion(
+          [
+            {
+              role: "system",
+              content: `${systemPrompt}\n\n${AGENT_REPAIR_PROMPT}`,
+            },
+            {
+              role: "user",
+              content: `Validation/tool loop failed with: ${reason}\nOutput to repair:\n${rawContent || "(none)"}`,
+            },
+          ],
           {
-            locationLabel: firstLocationLabel ?? "your locations",
-            action:
-              "Next 24h: run standard staffing and prep, keep delivery timing flexible, and recheck in 30 minutes",
-            timeWindow: "Next 24h",
-            confidence: "low",
-            sourceName: "system",
-            why: ["Live model/tool synthesis failed for this turn."],
-            deltaReasoning:
-              "Fallback keeps operations stable under uncertainty.",
-            escalationTrigger:
-              "Escalate only if live service indicators exceed baseline.",
-            reviewBacked: false,
-            citations: [
-              {
-                sourceName: "system",
-                note: "agent fallback",
-              },
-            ],
+            temperature: 0.1,
+            maxTokens: 1200,
+            timeoutMs: Math.min(budgetLeftForRepairMs, MAX_REPAIR_TIMEOUT_MS),
           },
-        ],
-        assumptions: ["Fallback applied due to agent synthesis failure."],
-        followUpQuestion:
-          "Want me to retry now with the same locations and baseline?",
-      };
+        );
+        parsed = parseAgentResponse(repaired);
+        parseOk = true;
+        repairOk = true;
+        phaseTelemetry.push({
+          phase: "repair",
+          status: "ok",
+          durationMs: Date.now() - repairStartedAtMs,
+        });
+      } catch (repairError) {
+        degraded = true;
+        repairFailureReason =
+          repairError instanceof Error
+            ? repairError.message
+            : "unknown_repair_error";
+        failureCode ??= inferFailureCode(repairError);
+        failureStage = "repair";
+        phaseTelemetry.push({
+          phase: "repair",
+          status: "error",
+          durationMs: Date.now() - repairStartedAtMs,
+          failureStage,
+          failureCode,
+        });
+      }
     }
+
+    parsed ??= {
+      narrative:
+        "Live model synthesis is temporarily unavailable, so I am using a conservative operating fallback.",
+      recommendations: [
+        {
+          locationLabel: firstLocationLabel ?? "your locations",
+          action:
+            "Next 24h: run standard staffing and prep, keep delivery timing flexible, and recheck in 30 minutes",
+          timeWindow: "Next 24h",
+          confidence: "low",
+          sourceName: "system",
+          why: ["Live model/tool synthesis failed for this turn."],
+          deltaReasoning:
+            "Fallback keeps operations stable under uncertainty.",
+          escalationTrigger:
+            "Escalate only if live service indicators exceed baseline.",
+          reviewBacked: false,
+          citations: [
+            {
+              sourceName: "system",
+              note: "agent fallback",
+            },
+          ],
+        },
+      ],
+      assumptions: ["Fallback applied due to agent synthesis failure."],
+      followUpQuestion: "Want me to retry now with the same locations and baseline?",
+    };
   }
 
   const reviewSignals = tools.getReviewSignals();
@@ -625,6 +686,10 @@ export async function runAgentTurn(
       repairAttempted,
       repairOk,
       toolLoop: toolLoopDiagnostics,
+      prefetchToolCallCount: prefetchExecutions.length,
+      prefetchToolCallsByName,
+      loopToolCallCount: toolLoopDiagnostics?.toolCallCount ?? 0,
+      loopToolCallsByName: toolLoopDiagnostics?.toolCallsByName ?? {},
     },
     phaseTelemetry,
   };

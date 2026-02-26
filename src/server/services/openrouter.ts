@@ -63,6 +63,7 @@ interface ChatCompletionOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number;
 }
 
 interface ModelFailure {
@@ -132,6 +133,17 @@ interface ToolLoopParams {
   options?: ChatCompletionOptions;
   maxRounds?: number;
   maxToolCalls?: number;
+  deadlineMs?: number;
+}
+
+export class ToolLoopError extends Error {
+  diagnostics: ToolLoopDiagnostics;
+
+  constructor(message: string, diagnostics: ToolLoopDiagnostics) {
+    super(message);
+    this.name = "ToolLoopError";
+    this.diagnostics = diagnostics;
+  }
 }
 
 function toFailureCode(status?: number): string | undefined {
@@ -198,6 +210,13 @@ async function requestChatCompletion(
   tools?: ToolDefinition[],
 ): Promise<ModelResult> {
   let response: Response;
+  const timeoutMs = options?.timeoutMs;
+  const controller =
+    timeoutMs && timeoutMs > 0 ? new AbortController() : undefined;
+  const timeoutHandle =
+    controller && timeoutMs
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : undefined;
 
   try {
     response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -222,8 +241,21 @@ async function requestChatCompletion(
           },
         })),
       }),
+      signal: controller?.signal,
     });
   } catch (error) {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    if (error instanceof Error && error.name === "AbortError") {
+      return {
+        failure: {
+          message: `Request timed out after ${timeoutMs ?? 0}ms`,
+          retryable: true,
+        },
+      };
+    }
+
     const message =
       error instanceof Error
         ? error.message
@@ -234,6 +266,9 @@ async function requestChatCompletion(
         retryable: true,
       },
     };
+  }
+  if (timeoutHandle) {
+    clearTimeout(timeoutHandle);
   }
 
   if (!response.ok) {
@@ -379,11 +414,28 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
   };
 
   for (let round = 0; round < maxRounds; round += 1) {
+    const remainingMs =
+      params.deadlineMs !== undefined ? params.deadlineMs - Date.now() : null;
+    if (remainingMs !== null && remainingMs <= 0) {
+      throw new ToolLoopError("AGENT_TURN_BUDGET_EXCEEDED", diagnostics);
+    }
+
+    const requestTimeoutMs =
+      remainingMs !== null
+        ? Math.max(
+            1,
+            Math.min(
+              params.options?.timeoutMs ?? Number.POSITIVE_INFINITY,
+              remainingMs,
+            ),
+          )
+        : params.options?.timeoutMs;
+
     diagnostics.roundsExecuted = round + 1;
     const result = await requestChatCompletion(
       messages,
       currentModel,
-      params.options,
+      { ...params.options, timeoutMs: requestTimeoutMs },
       params.tools,
     );
 
@@ -413,13 +465,22 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
         continue;
       }
 
-      throwFromFailure(currentModel, result.failure);
+      const errorLabel = result.failure.status
+        ? `${result.failure.status} - ${result.failure.message}`
+        : result.failure.message;
+      throw new ToolLoopError(
+        `OpenRouter API error: ${errorLabel}`,
+        diagnostics,
+      );
     }
 
     const message = result.data?.choices[0]?.message;
     const finishReason = result.data?.choices[0]?.finish_reason;
     if (!message) {
-      throw new Error("OpenRouter API error: missing response message");
+      throw new ToolLoopError(
+        "OpenRouter API error: missing response message",
+        diagnostics,
+      );
     }
 
     const toolCalls = message.tool_calls ?? [];
@@ -433,7 +494,10 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
     if (toolCalls.length === 0) {
       if (!message.content) {
         diagnostics.emptyFinalContent = true;
-        throw new Error("OpenRouter API error: missing final content");
+        throw new ToolLoopError(
+          "OpenRouter API error: missing final content",
+          diagnostics,
+        );
       }
       diagnostics.finalModel = currentModel;
       return {
@@ -452,7 +516,7 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
     for (const call of toolCalls) {
       if (toolExecutions.length >= maxToolCalls) {
         diagnostics.toolCallLimitHit = true;
-        throw new Error("AGENT_TOOL_CALL_LIMIT_REACHED");
+        throw new ToolLoopError("AGENT_TOOL_CALL_LIMIT_REACHED", diagnostics);
       }
 
       const tool = toolMap.get(call.function.name);
@@ -507,5 +571,5 @@ export async function chatCompletionWithTools(params: ToolLoopParams): Promise<{
   }
 
   diagnostics.roundLimitHit = true;
-  throw new Error("AGENT_TOOL_ROUND_LIMIT_REACHED");
+  throw new ToolLoopError("AGENT_TOOL_ROUND_LIMIT_REACHED", diagnostics);
 }
