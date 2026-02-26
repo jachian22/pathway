@@ -64,6 +64,7 @@ interface ChatCompletionOptions {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  allowFallback?: boolean;
   responseFormat?: {
     type: "json_object";
   };
@@ -373,6 +374,7 @@ export async function chatCompletion(
   options?: ChatCompletionOptions,
 ): Promise<string> {
   const { primaryModel, fallbackModel } = resolveModels(options);
+  const allowFallback = options?.allowFallback ?? true;
 
   const primaryResult = await requestChatCompletion(
     messages,
@@ -384,7 +386,7 @@ export async function chatCompletion(
     return primaryContent;
   }
 
-  if (fallbackModel && !primaryContent) {
+  if (allowFallback && fallbackModel && !primaryContent) {
     const fallbackResult = await requestChatCompletion(
       messages,
       fallbackModel,

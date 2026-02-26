@@ -45,6 +45,55 @@ type ErrorBannerState = {
   };
 };
 
+function buildEvidenceFingerprint(input: {
+  recommendations: FirstInsightOutput["recommendations"];
+  snapshots: FirstInsightOutput["snapshots"];
+  competitorSnapshot: FirstInsightOutput["competitorSnapshot"];
+}): string {
+  const normalized = {
+    recommendations: input.recommendations.map((item) => ({
+      locationLabel: item.locationLabel,
+      action: item.action,
+      timeWindow: item.timeWindow,
+      confidence: item.confidence,
+      sourceName: item.sourceName,
+      reviewBacked: item.reviewBacked,
+      sourceFreshnessSeconds: item.sourceFreshnessSeconds ?? null,
+      evidence: item.evidence
+        ? {
+            evidenceCount: item.evidence.evidenceCount,
+            recencyWindowDays: item.evidence.recencyWindowDays,
+            topRefs: item.evidence.topRefs.map((ref) => ({
+              placeId: ref.placeId,
+              reviewIdOrHash: ref.reviewIdOrHash,
+              publishTime: ref.publishTime,
+              theme: ref.theme,
+            })),
+          }
+        : null,
+    })),
+    snapshots: input.snapshots.map((snapshot) => ({
+      locationLabel: snapshot.locationLabel,
+      text: snapshot.text,
+      sampleReviewCount: snapshot.sampleReviewCount,
+      recencyWindowDays: snapshot.recencyWindowDays,
+      confidence: snapshot.confidence,
+    })),
+    competitorSnapshot: input.competitorSnapshot
+      ? {
+          label: input.competitorSnapshot.label,
+          text: input.competitorSnapshot.text,
+          confidence: input.competitorSnapshot.confidence,
+          sampleReviewCount: input.competitorSnapshot.sampleReviewCount,
+          recencyWindowDays: input.competitorSnapshot.recencyWindowDays,
+          status: input.competitorSnapshot.status,
+        }
+      : null,
+  };
+
+  return JSON.stringify(normalized);
+}
+
 function parseBaselineMessage(
   message: string,
   locationLabels: string[],
@@ -327,6 +376,7 @@ export function StaffingChat() {
   const [locationLabels, setLocationLabels] = useState<string[]>([]);
   const [activeLocations, setActiveLocations] = useState<string[]>([]);
   const [activeCompetitorName, setActiveCompetitorName] = useState("");
+  const lastEvidenceFingerprintRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorBanner, setErrorBanner] = useState<ErrorBannerState | null>(null);
   const [pendingClarification, setPendingClarification] =
@@ -607,6 +657,7 @@ export function StaffingChat() {
       setPendingClarification(null);
       setActiveLocations([]);
       setActiveCompetitorName("");
+      lastEvidenceFingerprintRef.current = null;
     }
 
     try {
@@ -623,15 +674,49 @@ export function StaffingChat() {
       setActiveCompetitorName(competitorNameForRequest);
       setErrorBanner(null);
 
+      const evidenceFingerprint = buildEvidenceFingerprint({
+        recommendations: response.recommendations,
+        snapshots: response.snapshots,
+        competitorSnapshot: response.competitorSnapshot,
+      });
+      const shouldAttachEvidence =
+        evidenceFingerprint !== lastEvidenceFingerprintRef.current;
+      if (shouldAttachEvidence) {
+        lastEvidenceFingerprintRef.current = evidenceFingerprint;
+        captureEvent("evidence_block_attached_changed", {
+          card_type: selectedCard,
+          turn_index: response.turnIndex,
+          recommendation_count: response.recommendations.length,
+          snapshot_count: response.snapshots.length,
+          has_competitor_snapshot: Boolean(response.competitorSnapshot),
+          message_chars: response.message.length,
+          used_fallback: response.usedFallback,
+        });
+      } else {
+        captureEvent("evidence_block_suppressed_duplicate", {
+          card_type: selectedCard,
+          turn_index: response.turnIndex,
+          recommendation_count: response.recommendations.length,
+          snapshot_count: response.snapshots.length,
+          has_competitor_snapshot: Boolean(response.competitorSnapshot),
+          message_chars: response.message.length,
+          used_fallback: response.usedFallback,
+        });
+      }
+
       setMessages((prev) => [
         ...prev,
         {
           id: `assistant-${response.turnIndex}-${Date.now()}`,
           role: "assistant",
           text: response.message,
-          recommendations: response.recommendations,
-          snapshots: response.snapshots,
-          competitorSnapshot: response.competitorSnapshot,
+          recommendations: shouldAttachEvidence
+            ? response.recommendations
+            : undefined,
+          snapshots: shouldAttachEvidence ? response.snapshots : undefined,
+          competitorSnapshot: shouldAttachEvidence
+            ? response.competitorSnapshot
+            : undefined,
         },
       ]);
 

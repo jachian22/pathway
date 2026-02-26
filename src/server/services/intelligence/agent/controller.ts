@@ -135,8 +135,9 @@ export interface AgentTurnOutput {
 
 const MAX_REPAIR_TIMEOUT_MS = 1200;
 const MIN_REPAIR_BUDGET_MS = 300;
-const SIGNAL_PACK_SUMMARY_TIMEOUT_MS = 700;
+const SIGNAL_PACK_SUMMARY_TIMEOUT_MS = 400;
 const SIGNAL_PACK_SUMMARY_MAX_TOKENS = 220;
+const LLM_TOOL_LOOP_REQUEST_TIMEOUT_MS = 3500;
 
 interface SignalPackLocation {
   locationLabel: string;
@@ -343,6 +344,7 @@ async function summarizeSignalPackWithLlm(params: {
       temperature: 0.1,
       maxTokens: SIGNAL_PACK_SUMMARY_MAX_TOKENS,
       timeoutMs: Math.min(params.timeoutMs, SIGNAL_PACK_SUMMARY_TIMEOUT_MS),
+      allowFallback: false,
       responseFormat: { type: "json_object" },
     },
   );
@@ -398,6 +400,45 @@ function inferFailureCode(error: unknown): string {
     return "OPENROUTER_ERROR";
   }
   return "AGENT_UNKNOWN_ERROR";
+}
+
+function salvageAgentResponseFromContent(
+  content: string,
+): AgentResponse | null {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+
+  const narrativeFromJson = /"narrative"\s*:\s*"([^"]*)/i.exec(trimmed)?.[1];
+  const followUpFromJson = /"followUpQuestion"\s*:\s*"([^"]*)/i.exec(
+    trimmed,
+  )?.[1];
+
+  const cleaned = trimmed
+    .replace(/```json|```/gi, " ")
+    .replace(/[{}[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const fallbackNarrative = cleaned
+    .replace(/"narrative"\s*:\s*/i, "")
+    .replace(/"followUpQuestion"\s*:\s*".*$/i, "")
+    .replace(/^"+|"+$/g, "")
+    .trim();
+
+  const narrative = (narrativeFromJson ?? fallbackNarrative)
+    .slice(0, 360)
+    .trim();
+  if (!narrative) return null;
+
+  const rawFollowUpQuestion = followUpFromJson?.slice(0, 140).trim();
+  const followUpQuestion =
+    rawFollowUpQuestion && rawFollowUpQuestion.length > 0
+      ? rawFollowUpQuestion
+      : undefined;
+  return {
+    narrative,
+    followUpQuestion,
+  };
 }
 
 function inferFailureStage(error: unknown): AgentFailureStage {
@@ -711,6 +752,10 @@ export async function runAgentTurn(
         model: modelOverride,
         temperature: 0.2,
         maxTokens: maxTokensForNarrative,
+        timeoutMs: Math.min(
+          LLM_TOOL_LOOP_REQUEST_TIMEOUT_MS,
+          Math.max(1, loopDeadlineMs - Date.now()),
+        ),
         responseFormat: { type: "json_object" },
       },
       deadlineMs: loopDeadlineMs,
@@ -751,23 +796,35 @@ export async function runAgentTurn(
         durationMs: Date.now() - parseStartedAtMs,
       });
     } catch (error) {
-      llmLoopError = error;
-      failureReason = error instanceof Error ? error.message : "unknown_error";
-      const inferredFailureCode = inferFailureCode(error);
-      rootFailureCode =
-        (inferredFailureCode === "AGENT_RESPONSE_NO_JSON" ||
-          inferredFailureCode === "AGENT_RESPONSE_INVALID_JSON") &&
-        toolLoopDiagnostics?.finalFinishReason === "length"
-          ? "AGENT_RESPONSE_TRUNCATED"
-          : inferredFailureCode;
-      rootFailureStage = "schema_parse";
-      phaseTelemetry.push({
-        phase: "schema_parse",
-        status: "error",
-        durationMs: Date.now() - parseStartedAtMs,
-        failureStage: rootFailureStage,
-        failureCode: rootFailureCode,
-      });
+      const salvaged = salvageAgentResponseFromContent(rawContent);
+      if (salvaged) {
+        parsed = salvaged;
+        parseOk = true;
+        phaseTelemetry.push({
+          phase: "schema_parse",
+          status: "ok",
+          durationMs: Date.now() - parseStartedAtMs,
+        });
+      } else {
+        llmLoopError = error;
+        failureReason =
+          error instanceof Error ? error.message : "unknown_error";
+        const inferredFailureCode = inferFailureCode(error);
+        rootFailureCode =
+          (inferredFailureCode === "AGENT_RESPONSE_NO_JSON" ||
+            inferredFailureCode === "AGENT_RESPONSE_INVALID_JSON") &&
+          toolLoopDiagnostics?.finalFinishReason === "length"
+            ? "AGENT_RESPONSE_TRUNCATED"
+            : inferredFailureCode;
+        rootFailureStage = "schema_parse";
+        phaseTelemetry.push({
+          phase: "schema_parse",
+          status: "error",
+          durationMs: Date.now() - parseStartedAtMs,
+          failureStage: rootFailureStage,
+          failureCode: rootFailureCode,
+        });
+      }
     }
   }
 
