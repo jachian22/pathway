@@ -63,6 +63,18 @@ export interface FirstInsightOutput {
     recencyWindowDays: number;
     confidence: "low" | "medium" | "high";
   }[];
+  competitorSnapshot?: {
+    label: string;
+    text: string;
+    confidence: "low" | "medium" | "high";
+    sampleReviewCount: number;
+    recencyWindowDays: number;
+    status:
+      | "resolved_with_reviews"
+      | "resolved_no_recent_reviews"
+      | "not_found"
+      | "limit_reached";
+  };
   sources: {
     weather: {
       status: "ok" | "error" | "stale" | "timeout";
@@ -127,8 +139,8 @@ async function safeSideEffect(
 
 function buildMessage(output: {
   summary: string;
-  snapshots: FirstInsightOutput["snapshots"];
   recommendations: Recommendation[];
+  competitorSnapshot?: FirstInsightOutput["competitorSnapshot"];
 }): string {
   const summaryHeadline = output.summary.split("\n")[0]?.trim();
   const headline =
@@ -137,25 +149,27 @@ function buildMessage(output: {
       : "Next 3 days staffing and prep signals:";
   const lines: string[] = [headline];
 
-  const keyDrivers = Array.from(
-    new Set(
-      output.recommendations
-        .flatMap((rec) => rec.explanation.why.slice(0, 1))
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0),
-    ),
-  ).slice(0, 2);
-
-  if (keyDrivers.length > 0) {
-    lines.push("", "What stands out:");
-    for (const item of keyDrivers) {
-      lines.push(`- ${item}`);
-    }
+  const topRecommendation = output.recommendations[0];
+  if (topRecommendation) {
+    lines.push("", `Top action: ${topRecommendation.action}`);
   }
 
-  const snapshot = output.snapshots[0];
-  if (snapshot) {
-    lines.push("", `${snapshot.locationLabel}: ${snapshot.text}`);
+  const topDriver = topRecommendation?.explanation.why[0]?.trim();
+  if (topDriver && topDriver.length > 0) {
+    lines.push(`Why now: ${topDriver}`);
+  }
+
+  if (output.competitorSnapshot) {
+    lines.push(
+      "",
+      `Competitor check: ${output.competitorSnapshot.label} (${output.competitorSnapshot.confidence}).`,
+    );
+  }
+
+  if (output.recommendations.length > 1) {
+    lines.push(
+      `I added ${output.recommendations.length - 1} more actions in the cards below.`,
+    );
   }
 
   if (output.recommendations.length > 0) {
@@ -268,9 +282,14 @@ async function resolveCompetitor(
   sessionId: string,
   turnIndex: number,
   competitorName?: string,
-): Promise<{ placeId?: string; snapshot?: string }> {
+): Promise<{
+  placeId?: string;
+  snapshot?: string;
+  resolvedName?: string;
+  status: "not_requested" | "limit_reached" | "not_found" | "resolved";
+}> {
   if (!competitorName || competitorName.trim().length === 0) {
-    return {};
+    return { status: "not_requested" };
   }
 
   const already = await ctx.db
@@ -280,6 +299,7 @@ async function resolveCompetitor(
 
   if ((already[0]?.total ?? 0) >= 1) {
     return {
+      status: "limit_reached",
       snapshot:
         "Competitor check already used in this session (v1.1 limit is one).",
     };
@@ -303,12 +323,15 @@ async function resolveCompetitor(
 
   if (!resolved) {
     return {
+      status: "not_found",
       snapshot: `Could not resolve competitor "${competitorName}" from places search.`,
     };
   }
 
   return {
+    status: "resolved",
     placeId: resolved.id,
+    resolvedName: resolved.displayName.text,
     snapshot: `Competitor check resolved: ${resolved.displayName.text}.`,
   };
 }
@@ -864,7 +887,9 @@ export async function runFirstInsight(
     },
   );
 
-  let competitor: { placeId?: string; snapshot?: string } = {};
+  let competitor: Awaited<ReturnType<typeof resolveCompetitor>> = {
+    status: "not_requested",
+  };
   try {
     competitor = await resolveCompetitor(
       ctx,
@@ -910,23 +935,74 @@ export async function runFirstInsight(
     baselineAssumed: !baselineByLocation.has(location.label) && idx === 0,
   }));
 
-  const competitorSnapshot = sourceBundle.competitorReview
-    ? `Quick read on competitor: ${sourceBundle.competitorReview.guestSnapshot}`
-    : competitor.snapshot;
+  const competitorSnapshotForUi: FirstInsightOutput["competitorSnapshot"] =
+    (() => {
+      if (competitor.status === "not_requested") {
+        return undefined;
+      }
+
+      if (competitor.status === "limit_reached") {
+        return {
+          label: "Competitor check",
+          text: "Already used in this session (v1.1 limit is one competitor check).",
+          confidence: "low",
+          sampleReviewCount: 0,
+          recencyWindowDays: 90,
+          status: "limit_reached",
+        };
+      }
+
+      if (competitor.status === "not_found") {
+        return {
+          label: input.competitorName ?? "Competitor",
+          text:
+            competitor.snapshot ??
+            "Could not resolve this competitor from places search.",
+          confidence: "low",
+          sampleReviewCount: 0,
+          recencyWindowDays: 90,
+          status: "not_found",
+        };
+      }
+
+      if (sourceBundle.competitorReview) {
+        return {
+          label: competitor.resolvedName ?? "Competitor",
+          text: sourceBundle.competitorReview.guestSnapshot,
+          confidence: sourceBundle.competitorReview.confidence,
+          sampleReviewCount: sourceBundle.competitorReview.sampleReviewCount,
+          recencyWindowDays: sourceBundle.competitorReview.recencyWindowDays,
+          status: "resolved_with_reviews",
+        };
+      }
+
+      return {
+        label: competitor.resolvedName ?? "Competitor",
+        text: "Resolved successfully, but there is not enough recent review evidence to summarize yet.",
+        confidence: "low",
+        sampleReviewCount: 0,
+        recencyWindowDays: 90,
+        status: "resolved_no_recent_reviews",
+      };
+    })();
+
+  const competitorSummaryLine = competitorSnapshotForUi
+    ? `Competitor check: ${competitorSnapshotForUi.label}. ${competitorSnapshotForUi.text}`
+    : undefined;
 
   const recommendationOutput = buildRecommendations(
     input.cardType,
     recommendationInputs,
     {
       doeDays: sourceBundle.doe.days,
-      competitorSnapshot,
+      competitorSnapshot: competitorSummaryLine,
     },
   );
 
   const messageText = buildMessage({
     summary: recommendationOutput.summary,
-    snapshots: recommendationOutput.snapshots,
     recommendations: recommendationOutput.recommendations,
+    competitorSnapshot: competitorSnapshotForUi,
   });
 
   const assistantMessageId = await insertMessage(
@@ -1124,6 +1200,7 @@ export async function runFirstInsight(
     locationLabels: resolvedLocations.map((location) => location.label),
     recommendations: recommendationOutput.recommendations,
     snapshots: recommendationOutput.snapshots,
+    competitorSnapshot: competitorSnapshotForUi,
     sources: {
       weather: sourceBundle.weather.status,
       events: sourceBundle.events.status,

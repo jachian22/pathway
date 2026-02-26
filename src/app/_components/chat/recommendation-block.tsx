@@ -8,10 +8,12 @@ import { type RouterOutputs } from "@/trpc/react";
 type FirstInsightOutput = RouterOutputs["intelligence"]["firstInsight"];
 type Recommendation = FirstInsightOutput["recommendations"][number];
 type Snapshot = FirstInsightOutput["snapshots"][number];
+type CompetitorSnapshot = FirstInsightOutput["competitorSnapshot"];
 
 interface RecommendationBlockProps {
   recommendations: Recommendation[];
   snapshots: Snapshot[];
+  competitorSnapshot?: CompetitorSnapshot;
 }
 
 function confidenceBadge(confidence: Recommendation["confidence"]): string {
@@ -23,6 +25,7 @@ function confidenceBadge(confidence: Recommendation["confidence"]): string {
 export function RecommendationBlock({
   recommendations,
   snapshots,
+  competitorSnapshot,
 }: RecommendationBlockProps) {
   const [openEvidenceIndex, setOpenEvidenceIndex] = useState<number | null>(
     null,
@@ -90,7 +93,7 @@ export function RecommendationBlock({
       {snapshots.length > 0 ? (
         <div className="border-surface-3 bg-surface-1 mb-5 rounded-lg border p-4">
           <h3 className="text-text-secondary text-sm font-semibold tracking-wide uppercase">
-            Guest Signal Snapshot
+            Guest Signal Snapshot (Your Locations)
           </h3>
           <div className="mt-3 space-y-3">
             {snapshots.map((snapshot) => (
@@ -106,6 +109,27 @@ export function RecommendationBlock({
                 </p>
               </div>
             ))}
+          </div>
+        </div>
+      ) : null}
+      {competitorSnapshot ? (
+        <div className="border-surface-3 bg-surface-1 mb-5 rounded-lg border p-4">
+          <h3 className="text-text-secondary text-sm font-semibold tracking-wide uppercase">
+            Competitor Snapshot (Optional)
+          </h3>
+          <div className="mt-3 space-y-2">
+            <p className="text-charcoal font-medium">
+              {competitorSnapshot.label}
+            </p>
+            <p className="text-text-primary text-sm">
+              {competitorSnapshot.text}
+            </p>
+            <p className="text-text-secondary text-xs">
+              confidence {competitorSnapshot.confidence}
+              {competitorSnapshot.sampleReviewCount > 0
+                ? ` · sample ${competitorSnapshot.sampleReviewCount}, last ${competitorSnapshot.recencyWindowDays} days`
+                : ""}
+            </p>
           </div>
         </div>
       ) : null}

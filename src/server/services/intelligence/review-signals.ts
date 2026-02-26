@@ -22,6 +22,9 @@ interface ReviewInput {
   text?: { text?: string };
 }
 
+const THEME_MIN_COUNT = 2;
+const THEME_MIN_SHARE = 0.3;
+
 function classifyTheme(text: string): ReviewEvidenceRef["theme"] {
   const value = text.toLowerCase();
   if (/(wait|line|queued|queue|seated)/.test(value)) return "wait_time";
@@ -47,6 +50,10 @@ function isRecent(
 
 function hashRef(input: string): string {
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
+}
+
+function humanizeTheme(theme: string): string {
+  return theme.replaceAll("_", " ");
 }
 
 export async function buildReviewSignals(
@@ -111,9 +118,12 @@ export async function buildReviewSignals(
       .filter(([, count]) => count > 0)
       .sort((a, b) => b[1] - a[1]);
 
-    const topTheme = sortedThemes[0]?.[0] ?? "service_speed";
-    const topIssue =
-      sortedThemes.find(([name]) => name !== topTheme)?.[0] ?? "wait_time";
+    const dominantOperationalThemeEntry = sortedThemes.find(([name, count]) => {
+      if (name === "other") return false;
+      return (
+        count >= THEME_MIN_COUNT && count / evidenceCount >= THEME_MIN_SHARE
+      );
+    });
 
     const recentDates = refs
       .map((ref) => new Date(ref.publishTime))
@@ -140,9 +150,12 @@ export async function buildReviewSignals(
       })
       .slice(0, 3);
 
-    const guestSnapshot =
-      `Quick read on what guests are saying: strongest praise trends around ${topTheme.replace("_", " ")}, ` +
-      `while friction most often shows up in ${topIssue.replace("_", " ")} mentions.`;
+    const topOperationalMention = sortedThemes.find(
+      ([theme]) => theme !== "other",
+    )?.[0];
+    const guestSnapshot = dominantOperationalThemeEntry
+      ? `Quick read on recent reviews: mentions are strongest around ${humanizeTheme(topOperationalMention ?? dominantOperationalThemeEntry[0])}, with the clearest operational friction in ${humanizeTheme(dominantOperationalThemeEntry[0])}.`
+      : "Quick read on recent reviews: mentions are mixed and there is no single dominant operational friction pattern in the current sample.";
 
     return {
       placeId,

@@ -3,6 +3,7 @@ import {
   type ClosureSignal,
   type DoeSignal,
   type Recommendation,
+  type ReviewEvidenceRef,
   type ReviewSignals,
   type VenueEventSignal,
   type WeatherSignal,
@@ -38,14 +39,34 @@ export interface RecommendationEngineOutput {
   snapshots: GuestSnapshot[];
 }
 
-function topTheme(review: ReviewSignals): string {
-  const entries = Object.entries(review.themes).sort((a, b) => b[1] - a[1]);
-  return entries[0]?.[0]?.replaceAll("_", " ") ?? "service";
+const THEME_MIN_COUNT = 2;
+const THEME_MIN_SHARE = 0.3;
+
+function humanizeTheme(theme: string): string {
+  return theme.replaceAll("_", " ");
 }
 
-function secondTheme(review: ReviewSignals): string {
-  const entries = Object.entries(review.themes).sort((a, b) => b[1] - a[1]);
-  return entries[1]?.[0]?.replaceAll("_", " ") ?? "wait time";
+function sortedThemes(
+  review: ReviewSignals,
+): Array<[ReviewEvidenceRef["theme"], number]> {
+  return (
+    Object.entries(review.themes) as Array<[ReviewEvidenceRef["theme"], number]>
+  )
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1]);
+}
+
+function strongestOperationalTheme(
+  review: ReviewSignals,
+): ReviewEvidenceRef["theme"] | null {
+  const entries = sortedThemes(review);
+  const candidate = entries.find(([theme]) => theme !== "other");
+  if (!candidate) return null;
+
+  const [theme, count] = candidate;
+  if (count < THEME_MIN_COUNT) return null;
+  if (count / Math.max(review.evidenceCount, 1) < THEME_MIN_SHARE) return null;
+  return theme;
 }
 
 function mapCardIntro(cardType: CardType): string {
@@ -101,8 +122,8 @@ function buildEventRecommendation(
   const doeApplies = doeModifier?.date === eventDate;
 
   if (input.review && input.review.evidenceCount > 0) {
-    const primaryTheme = topTheme(input.review);
-    if (primaryTheme.includes("wait") || primaryTheme.includes("host")) {
+    const primaryTheme = strongestOperationalTheme(input.review);
+    if (primaryTheme === "wait_time" || primaryTheme === "host_queue") {
       action = `${timeWindow}: add 1 host + 1 FOH floater at ${input.locationLabel}`;
       why.push(
         "Recent guest feedback flags wait/host pressure during peak windows",
@@ -195,7 +216,7 @@ function buildWeatherRecommendation(
 
   return {
     locationLabel: input.locationLabel,
-    action: `${timeWindow}: shift staffing to indoor and off-prem flow coverage at ${input.locationLabel}`,
+    action: `${timeWindow}: rebalance FOH for weather-driven traffic shifts at ${input.locationLabel}`,
     timeWindow,
     confidence: "medium",
     sourceName: "weather",
@@ -251,7 +272,7 @@ function buildDoeRecommendation(
     explanation: {
       why: [
         doeSignalLine(doeModifier),
-        "School-day schedule shifts can change lunchtime pacing and family order mix.",
+        "Weekday school-calendar shifts can change lunchtime traffic and pickup mix.",
       ],
       deltaReasoning:
         "A flex role protects throughput while avoiding overstaffing.",
@@ -268,13 +289,13 @@ function buildReviewOnlyRecommendation(
   const review = input.review;
   if (!review || review.evidenceCount < 3) return null;
 
-  const dominantTheme = topTheme(review);
+  const dominantTheme = strongestOperationalTheme(review);
   const timeWindow = "Next 3 days peak windows";
   return {
     locationLabel: input.locationLabel,
     action: `${timeWindow}: run a host/FOH throughput check every 15 min at ${input.locationLabel}`,
     timeWindow,
-    confidence: review.confidence,
+    confidence: dominantTheme ? review.confidence : "low",
     sourceName: "reviews",
     evidence: {
       evidenceCount: review.evidenceCount,
@@ -282,7 +303,13 @@ function buildReviewOnlyRecommendation(
       topRefs: review.topRefs,
     },
     explanation: {
-      why: [`Guest reviews repeatedly reference ${dominantTheme} friction.`],
+      why: dominantTheme
+        ? [
+            `Guest reviews repeatedly reference ${humanizeTheme(dominantTheme)} friction.`,
+          ]
+        : [
+            "Recent review mentions are mixed, with no single dominant friction theme.",
+          ],
       deltaReasoning:
         "Monitoring and quick staffing adjustments reduce repeat complaint patterns.",
       escalationTrigger:
@@ -296,9 +323,14 @@ function buildSnapshot(
   locationLabel: string,
   review: ReviewSignals,
 ): GuestSnapshot {
+  const dominantTheme = strongestOperationalTheme(review);
+  const operationsLine = dominantTheme
+    ? `Operationally, this points to pressure around ${humanizeTheme(dominantTheme)} patterns in peak periods.`
+    : "Operationally, evidence is mixed, so keep standard monitoring unless live service signals rise.";
+
   return {
     locationLabel,
-    text: `${review.guestSnapshot} Operationally, this points to pressure around ${secondTheme(review)} patterns in peak periods.`,
+    text: `${review.guestSnapshot} ${operationsLine}`,
     sampleReviewCount: review.sampleReviewCount,
     recencyWindowDays: review.recencyWindowDays,
     confidence: review.confidence,

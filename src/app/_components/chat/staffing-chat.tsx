@@ -14,6 +14,11 @@ import { api, type RouterOutputs } from "@/trpc/react";
 type CardType = "staffing" | "risk" | "opportunity";
 type FirstInsightOutput = RouterOutputs["intelligence"]["firstInsight"];
 type BaselineScope = "none" | "all" | "single" | "ambiguous";
+type FollowUpIntent =
+  | "decline_adjustment"
+  | "evidence_question"
+  | "baseline_update"
+  | "new_insight_request";
 
 type ChatMessage = {
   id: string;
@@ -21,6 +26,7 @@ type ChatMessage = {
   text: string;
   recommendations?: FirstInsightOutput["recommendations"];
   snapshots?: FirstInsightOutput["snapshots"];
+  competitorSnapshot?: FirstInsightOutput["competitorSnapshot"];
 };
 
 type PendingClarification = {
@@ -94,6 +100,196 @@ function resolveBaselineClarification(
   return { scope: "assumed_single", locationLabel: locationLabels[0] };
 }
 
+function parseCompetitorInput(rawValue: string): {
+  selected: string;
+  candidateCount: number;
+  selectedIndex: number;
+} {
+  const candidates = rawValue
+    .split(/\s*(?:,|\/|&|\band\b)\s*/i)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  return {
+    selected: candidates[0] ?? "",
+    candidateCount: candidates.length,
+    selectedIndex: candidates.length > 0 ? 0 : -1,
+  };
+}
+
+function looksLikeDecline(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return /^(no|nope|nah|all set|looks good|looks great|we['’]?re good|that works|no thanks|not now)[.!?]*$/.test(
+    normalized,
+  );
+}
+
+function looksLikeEvidenceQuestion(message: string): boolean {
+  const normalized = message.toLowerCase();
+  const asksForEvidence =
+    /\b(where|which|show|source|evidence|mention|mentioned|reviews?|quote|quoted)\b/.test(
+      normalized,
+    ) || normalized.includes("where did you see");
+  const mentionsSignal =
+    /\b(wait|line|queue|host|service|slow|kitchen|delay|review|reviews)\b/.test(
+      normalized,
+    );
+  return asksForEvidence && mentionsSignal;
+}
+
+function looksLikeNewInsightRequest(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return /\b(rerun|re-run|recheck|refresh|run again|check again|update)\b/.test(
+    normalized,
+  );
+}
+
+function routeFollowUpIntent(
+  message: string,
+  baselineParsed: { baselineFoh?: number },
+): FollowUpIntent {
+  if (baselineParsed.baselineFoh !== undefined) {
+    return "baseline_update";
+  }
+  if (looksLikeDecline(message)) {
+    return "decline_adjustment";
+  }
+  if (looksLikeEvidenceQuestion(message)) {
+    return "evidence_question";
+  }
+  if (looksLikeNewInsightRequest(message)) {
+    return "new_insight_request";
+  }
+  return "new_insight_request";
+}
+
+function extractThemeFromQuestion(
+  message: string,
+): "wait_time" | "service_speed" | "host_queue" | "kitchen_delay" | null {
+  const normalized = message.toLowerCase();
+  if (/(wait|line|queued|queue|seated)/.test(normalized)) return "wait_time";
+  if (/(slow service|service slow|took forever|server)/.test(normalized))
+    return "service_speed";
+  if (/(host|front desk|check in|reservation)/.test(normalized))
+    return "host_queue";
+  if (/(kitchen|food took|cold food|hot food)/.test(normalized))
+    return "kitchen_delay";
+  return null;
+}
+
+function humanizeTheme(theme: string): string {
+  return theme.replaceAll("_", " ");
+}
+
+function buildEvidenceAnswer(
+  question: string,
+  messages: ChatMessage[],
+): {
+  text: string;
+  refCount: number;
+  hadSufficientEvidence: boolean;
+  theme: string;
+} {
+  const theme = extractThemeFromQuestion(question);
+  const latestAssistantWithEvidence = [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        message.recommendations?.some(
+          (item) => (item.evidence?.topRefs.length ?? 0) > 0,
+        ),
+    );
+
+  if (!latestAssistantWithEvidence?.recommendations) {
+    return {
+      text: "I do not have recent review citations in this session yet. Ask me to rerun insights or expand “Show evidence” on an action card.",
+      refCount: 0,
+      hadSufficientEvidence: false,
+      theme: theme ?? "none",
+    };
+  }
+
+  const refs = latestAssistantWithEvidence.recommendations.flatMap((item) =>
+    (item.evidence?.topRefs ?? []).map((ref) => ({
+      locationLabel: item.locationLabel,
+      recencyWindowDays: item.evidence?.recencyWindowDays ?? 90,
+      ref,
+    })),
+  );
+
+  if (refs.length === 0) {
+    return {
+      text: "I do not have recent review citations in this session yet. Ask me to rerun insights or expand “Show evidence” on an action card.",
+      refCount: 0,
+      hadSufficientEvidence: false,
+      theme: theme ?? "none",
+    };
+  }
+
+  const themeRefs = theme
+    ? refs.filter((entry) => entry.ref.theme === theme)
+    : refs;
+  const sorted = [...themeRefs].sort(
+    (a, b) =>
+      new Date(b.ref.publishTime).getTime() -
+      new Date(a.ref.publishTime).getTime(),
+  );
+  const top = sorted.slice(0, 3);
+  const recencyWindowDays = refs[0]?.recencyWindowDays ?? 90;
+
+  if (top.length === 0 && theme) {
+    const availableThemes = Array.from(
+      new Set(
+        refs
+          .map((entry) => entry.ref.theme)
+          .filter((value) => value !== "other")
+          .map((value) => humanizeTheme(value)),
+      ),
+    ).slice(0, 2);
+
+    const availableThemeLine =
+      availableThemes.length > 0
+        ? `I do see clearer mentions around ${availableThemes.join(" and ")}.`
+        : "Recent review evidence is mixed without one dominant operational theme.";
+
+    return {
+      text: `I do not see strong recent mentions specifically about ${humanizeTheme(theme)}. ${availableThemeLine} Want me to adjust staffing from events and weather anyway?`,
+      refCount: 0,
+      hadSufficientEvidence: false,
+      theme,
+    };
+  }
+
+  const lines = [
+    theme
+      ? `Here are recent review mentions tied to ${humanizeTheme(theme)}:`
+      : "Here are the recent review mentions I used:",
+  ];
+
+  top.forEach((entry, index) => {
+    const published = new Date(entry.ref.publishTime);
+    const dateLabel = Number.isNaN(published.getTime())
+      ? "unknown date"
+      : published.toLocaleDateString();
+    lines.push(
+      `${index + 1}. ${entry.locationLabel} · ${dateLabel} · rating ${entry.ref.rating ?? "n/a"}: "${entry.ref.excerpt ?? "No excerpt available."}"`,
+    );
+  });
+
+  lines.push(
+    `These citations are from the last ${recencyWindowDays} days of Google reviews.`,
+    "Want me to convert this into a staffing adjustment for one location?",
+  );
+
+  return {
+    text: lines.join("\n"),
+    refCount: top.length,
+    hadSufficientEvidence: true,
+    theme: theme ?? "none",
+  };
+}
+
 export function StaffingChat() {
   const [selectedCard, setSelectedCard] = useState<CardType>("staffing");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -143,9 +339,16 @@ export function StaffingChat() {
         ? activeLocations
         : (params?.parsedLocationsInput ?? [])
       : (params?.parsedLocationsInput ?? []);
+    const competitorParse = withFollowup
+      ? {
+          selected: activeCompetitorName,
+          candidateCount: activeCompetitorName ? 1 : 0,
+          selectedIndex: activeCompetitorName ? 0 : -1,
+        }
+      : parseCompetitorInput(params?.competitorNameInput ?? "");
     const competitorNameForRequest = withFollowup
       ? activeCompetitorName
-      : (params?.competitorNameInput?.trim() ?? "");
+      : competitorParse.selected;
     const locationsChanged =
       !withFollowup &&
       sessionId !== null &&
@@ -183,6 +386,13 @@ export function StaffingChat() {
               : "Any opportunities I'm missing?",
         card_type: selectedCard,
       });
+
+      if (competitorParse.candidateCount > 0) {
+        captureEvent("competitor_parse_applied", {
+          candidate_count: competitorParse.candidateCount,
+          selected_index: competitorParse.selectedIndex,
+        });
+      }
     }
 
     if (competitorNameForRequest) {
@@ -210,6 +420,58 @@ export function StaffingChat() {
           text: withFollowup,
         },
       ]);
+    }
+
+    const baselineParsedForIntent =
+      withFollowup && !pendingClarification
+        ? parseBaselineMessage(withFollowup, locationLabels)
+        : undefined;
+
+    if (
+      withFollowup &&
+      !pendingClarification &&
+      baselineParsedForIntent !== undefined
+    ) {
+      const followupIntent = routeFollowUpIntent(
+        withFollowup,
+        baselineParsedForIntent,
+      );
+      captureEvent("followup_intent_routed", {
+        intent: followupIntent,
+        used_full_summary:
+          followupIntent === "new_insight_request" ||
+          followupIntent === "baseline_update",
+      });
+
+      if (followupIntent === "decline_adjustment") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-decline-${Date.now()}`,
+            role: "assistant",
+            text: "Understood. I will keep the current staffing plan as-is. Want me to re-check conditions later today before dinner prep?",
+          },
+        ]);
+        return;
+      }
+
+      if (followupIntent === "evidence_question") {
+        const evidenceAnswer = buildEvidenceAnswer(withFollowup, messages);
+        captureEvent("evidence_answered", {
+          theme: evidenceAnswer.theme,
+          ref_count: evidenceAnswer.refCount,
+          had_sufficient_evidence: evidenceAnswer.hadSufficientEvidence,
+        });
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-evidence-${Date.now()}`,
+            role: "assistant",
+            text: evidenceAnswer.text,
+          },
+        ]);
+        return;
+      }
     }
 
     let baselineContext:
@@ -245,7 +507,9 @@ export function StaffingChat() {
       });
       setPendingClarification(null);
     } else if (withFollowup) {
-      const baselineParsed = parseBaselineMessage(withFollowup, locationLabels);
+      const baselineParsed =
+        baselineParsedForIntent ??
+        parseBaselineMessage(withFollowup, locationLabels);
       if (
         baselineParsed.scope === "ambiguous" &&
         baselineParsed.baselineFoh !== undefined &&
@@ -334,6 +598,7 @@ export function StaffingChat() {
           text: response.message,
           recommendations: response.recommendations,
           snapshots: response.snapshots,
+          competitorSnapshot: response.competitorSnapshot,
         },
       ]);
 
@@ -497,6 +762,7 @@ export function StaffingChat() {
                         <RecommendationBlock
                           recommendations={message.recommendations}
                           snapshots={message.snapshots ?? []}
+                          competitorSnapshot={message.competitorSnapshot}
                         />
                       ) : null}
                     </div>
