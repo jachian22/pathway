@@ -20,6 +20,8 @@ export const env = createEnv({
     OPENWEATHER_API_KEY: z.string(),
     TICKETMASTER_API_KEY: z.string(),
     GOOGLE_PLACES_API_KEY: z.string(),
+    NYC_DOT_CLOSURES_URL: z.string().url().optional(),
+    NYC_OPEN_DATA_APP_TOKEN: z.string().optional(),
   },
 
   /**
@@ -50,6 +52,8 @@ export const env = createEnv({
     OPENWEATHER_API_KEY: process.env.OPENWEATHER_API_KEY,
     TICKETMASTER_API_KEY: process.env.TICKETMASTER_API_KEY,
     GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
+    NYC_DOT_CLOSURES_URL: process.env.NYC_DOT_CLOSURES_URL,
+    NYC_OPEN_DATA_APP_TOKEN: process.env.NYC_OPEN_DATA_APP_TOKEN,
 
     // Client-side
     NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN: process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN,

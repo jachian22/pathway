@@ -1,0 +1,2215 @@
+{
+  "id": "3133cd79-b52f-4b4d-bd28-d61c98759538",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.pathway_chat_competitor_checks": {
+      "name": "pathway_chat_competitor_checks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "turnIndex": {
+          "name": "turnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "queryText": {
+          "name": "queryText",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolvedPlaceId": {
+          "name": "resolvedPlaceId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolvedName": {
+          "name": "resolvedName",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "latencyMs": {
+          "name": "latencyMs",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_competitor_checks_session_turn_created_idx": {
+          "name": "chat_competitor_checks_session_turn_created_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "turnIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_competitor_checks_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_competitor_checks_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_competitor_checks",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_competitor_checks_status_check": {
+          "name": "chat_competitor_checks_status_check",
+          "value": "\"pathway_chat_competitor_checks\".\"status\" in ('resolved','not_found','ambiguous','error')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_fallbacks": {
+      "name": "pathway_chat_fallbacks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "turnIndex": {
+          "name": "turnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fallbackType": {
+          "name": "fallbackType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourcesDown": {
+          "name": "sourcesDown",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "responseText": {
+          "name": "responseText",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_fallbacks_session_turn_idx": {
+          "name": "chat_fallbacks_session_turn_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "turnIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_fallbacks_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_fallbacks_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_fallbacks",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_fallbacks_type_check": {
+          "name": "chat_fallbacks_type_check",
+          "value": "\"pathway_chat_fallbacks\".\"fallbackType\" in ('partial_data','all_sources_down','timeout','validation')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_memory_events": {
+      "name": "pathway_chat_memory_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "distinctId": {
+          "name": "distinctId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "turnIndex": {
+          "name": "turnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "eventType": {
+          "name": "eventType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "memoryScope": {
+          "name": "memoryScope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "memoryNamespace": {
+          "name": "memoryNamespace",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "memoryKey": {
+          "name": "memoryKey",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "oldValueJson": {
+          "name": "oldValueJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "newValueJson": {
+          "name": "newValueJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valueSource": {
+          "name": "valueSource",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assumed": {
+          "name": "assumed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "confidenceCap": {
+          "name": "confidenceCap",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'none'"
+        },
+        "correlationId": {
+          "name": "correlationId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_memory_events_session_turn_idx": {
+          "name": "chat_memory_events_session_turn_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "turnIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_memory_events_distinct_created_idx": {
+          "name": "chat_memory_events_distinct_created_idx",
+          "columns": [
+            {
+              "expression": "distinctId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_memory_events_key_created_idx": {
+          "name": "chat_memory_events_key_created_idx",
+          "columns": [
+            {
+              "expression": "memoryNamespace",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "memoryKey",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_memory_events_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_memory_events_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_memory_events",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_memory_events_type_check": {
+          "name": "chat_memory_events_type_check",
+          "value": "\"pathway_chat_memory_events\".\"eventType\" in ('fact_set','fact_corrected','assumption_set','assumption_corrected','fact_expired','fact_deleted')"
+        },
+        "chat_memory_events_scope_check": {
+          "name": "chat_memory_events_scope_check",
+          "value": "\"pathway_chat_memory_events\".\"memoryScope\" in ('session','cross_session')"
+        },
+        "chat_memory_events_namespace_check": {
+          "name": "chat_memory_events_namespace_check",
+          "value": "\"pathway_chat_memory_events\".\"memoryNamespace\" in ('baseline','location','preference','constraint','system','other')"
+        },
+        "chat_memory_events_value_source_check": {
+          "name": "chat_memory_events_value_source_check",
+          "value": "\"pathway_chat_memory_events\".\"valueSource\" in ('explicit','assumed','inferred','default')"
+        },
+        "chat_memory_events_confidence_cap_check": {
+          "name": "chat_memory_events_confidence_cap_check",
+          "value": "\"pathway_chat_memory_events\".\"confidenceCap\" in ('none','medium','low')"
+        },
+        "chat_memory_events_scope_presence_check": {
+          "name": "chat_memory_events_scope_presence_check",
+          "value": "((\"pathway_chat_memory_events\".\"memoryScope\" = 'session' and \"pathway_chat_memory_events\".\"sessionId\" is not null) or (\"pathway_chat_memory_events\".\"memoryScope\" = 'cross_session' and \"pathway_chat_memory_events\".\"distinctId\" is not null))"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_messages": {
+      "name": "pathway_chat_messages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "messageIndex": {
+          "name": "messageIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "turnIndex": {
+          "name": "turnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contentText": {
+          "name": "contentText",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "contentJson": {
+          "name": "contentJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "piiRedacted": {
+          "name": "piiRedacted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "inputTokens": {
+          "name": "inputTokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outputTokens": {
+          "name": "outputTokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "latencyMs": {
+          "name": "latencyMs",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_messages_session_message_index_uidx": {
+          "name": "chat_messages_session_message_index_uidx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "messageIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_messages_session_turn_idx": {
+          "name": "chat_messages_session_turn_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "turnIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_messages_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_messages_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_messages",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_messages_role_check": {
+          "name": "chat_messages_role_check",
+          "value": "\"pathway_chat_messages\".\"role\" in ('user','assistant','tool','system')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_recommendation_evidence": {
+      "name": "pathway_chat_recommendation_evidence",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "recommendationId": {
+          "name": "recommendationId",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "turnIndex": {
+          "name": "turnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceName": {
+          "name": "sourceName",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entityType": {
+          "name": "entityType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "placeId": {
+          "name": "placeId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewIdHash": {
+          "name": "reviewIdHash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewPublishAt": {
+          "name": "reviewPublishAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewRating": {
+          "name": "reviewRating",
+          "type": "numeric(2, 1)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "theme": {
+          "name": "theme",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "excerpt": {
+          "name": "excerpt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidenceRank": {
+          "name": "evidenceRank",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "evidenceWeight": {
+          "name": "evidenceWeight",
+          "type": "numeric(6, 3)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_recommendation_evidence_recommendation_rank_idx": {
+          "name": "chat_recommendation_evidence_recommendation_rank_idx",
+          "columns": [
+            {
+              "expression": "recommendationId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "evidenceRank",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_recommendation_evidence_session_turn_created_idx": {
+          "name": "chat_recommendation_evidence_session_turn_created_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "turnIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_recommendation_evidence_place_publish_idx": {
+          "name": "chat_recommendation_evidence_place_publish_idx",
+          "columns": [
+            {
+              "expression": "placeId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "reviewPublishAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_recommendation_evidence_recommendationId_pathway_chat_recommendations_id_fk": {
+          "name": "pathway_chat_recommendation_evidence_recommendationId_pathway_chat_recommendations_id_fk",
+          "tableFrom": "pathway_chat_recommendation_evidence",
+          "tableTo": "pathway_chat_recommendations",
+          "columnsFrom": [
+            "recommendationId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "pathway_chat_recommendation_evidence_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_recommendation_evidence_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_recommendation_evidence",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_recommendation_evidence_source_name_check": {
+          "name": "chat_recommendation_evidence_source_name_check",
+          "value": "\"pathway_chat_recommendation_evidence\".\"sourceName\" in ('reviews','events','weather','closures','doe','system')"
+        },
+        "chat_recommendation_evidence_entity_type_check": {
+          "name": "chat_recommendation_evidence_entity_type_check",
+          "value": "\"pathway_chat_recommendation_evidence\".\"entityType\" in ('own_location','competitor','system')"
+        },
+        "chat_recommendation_evidence_theme_check": {
+          "name": "chat_recommendation_evidence_theme_check",
+          "value": "\"pathway_chat_recommendation_evidence\".\"theme\" in ('wait_time','service_speed','host_queue','kitchen_delay','food_quality','value','other')"
+        },
+        "chat_recommendation_evidence_rank_check": {
+          "name": "chat_recommendation_evidence_rank_check",
+          "value": "\"pathway_chat_recommendation_evidence\".\"evidenceRank\" between 1 and 10"
+        },
+        "chat_recommendation_evidence_reviews_required_check": {
+          "name": "chat_recommendation_evidence_reviews_required_check",
+          "value": "((\"pathway_chat_recommendation_evidence\".\"sourceName\" = 'reviews' and \"pathway_chat_recommendation_evidence\".\"placeId\" is not null and \"pathway_chat_recommendation_evidence\".\"reviewPublishAt\" is not null) or (\"pathway_chat_recommendation_evidence\".\"sourceName\" <> 'reviews'))"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_recommendations": {
+      "name": "pathway_chat_recommendations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "messageId": {
+          "name": "messageId",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "turnIndex": {
+          "name": "turnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "locationLabel": {
+          "name": "locationLabel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "timeWindow": {
+          "name": "timeWindow",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceName": {
+          "name": "sourceName",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceFreshnessSeconds": {
+          "name": "sourceFreshnessSeconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ruleVersion": {
+          "name": "ruleVersion",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "impactScore": {
+          "name": "impactScore",
+          "type": "numeric(6, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewBacked": {
+          "name": "reviewBacked",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "evidenceCount": {
+          "name": "evidenceCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "recencyWindowDays": {
+          "name": "recencyWindowDays",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "explanationJson": {
+          "name": "explanationJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_recommendations_session_turn_idx": {
+          "name": "chat_recommendations_session_turn_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "turnIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_recommendations_review_backed_idx": {
+          "name": "chat_recommendations_review_backed_idx",
+          "columns": [
+            {
+              "expression": "reviewBacked",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_recommendations_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_recommendations_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_recommendations",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "pathway_chat_recommendations_messageId_pathway_chat_messages_id_fk": {
+          "name": "pathway_chat_recommendations_messageId_pathway_chat_messages_id_fk",
+          "tableFrom": "pathway_chat_recommendations",
+          "tableTo": "pathway_chat_messages",
+          "columnsFrom": [
+            "messageId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_recommendations_confidence_check": {
+          "name": "chat_recommendations_confidence_check",
+          "value": "\"pathway_chat_recommendations\".\"confidence\" in ('low','medium','high')"
+        },
+        "chat_recommendations_source_name_check": {
+          "name": "chat_recommendations_source_name_check",
+          "value": "\"pathway_chat_recommendations\".\"sourceName\" in ('weather','events','closures','doe','reviews','system')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_review_signal_runs": {
+      "name": "pathway_chat_review_signal_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "turnIndex": {
+          "name": "turnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entityType": {
+          "name": "entityType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "placeId": {
+          "name": "placeId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceName": {
+          "name": "sourceName",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'reviews'"
+        },
+        "sampleReviewCount": {
+          "name": "sampleReviewCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "evidenceCount": {
+          "name": "evidenceCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "recencyWindowDays": {
+          "name": "recencyWindowDays",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "themesDetected": {
+          "name": "themesDetected",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "signalScoresJson": {
+          "name": "signalScoresJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "latencyMs": {
+          "name": "latencyMs",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cacheHit": {
+          "name": "cacheHit",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "sourceFreshnessSeconds": {
+          "name": "sourceFreshnessSeconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "errorCode": {
+          "name": "errorCode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_review_signal_runs_session_turn_created_idx": {
+          "name": "chat_review_signal_runs_session_turn_created_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "turnIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_review_signal_runs_place_created_idx": {
+          "name": "chat_review_signal_runs_place_created_idx",
+          "columns": [
+            {
+              "expression": "placeId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_review_signal_runs_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_review_signal_runs_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_review_signal_runs",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_review_signal_runs_entity_type_check": {
+          "name": "chat_review_signal_runs_entity_type_check",
+          "value": "\"pathway_chat_review_signal_runs\".\"entityType\" in ('own_location','competitor')"
+        },
+        "chat_review_signal_runs_source_name_check": {
+          "name": "chat_review_signal_runs_source_name_check",
+          "value": "\"pathway_chat_review_signal_runs\".\"sourceName\" = 'reviews'"
+        },
+        "chat_review_signal_runs_status_check": {
+          "name": "chat_review_signal_runs_status_check",
+          "value": "\"pathway_chat_review_signal_runs\".\"status\" in ('ok','error','timeout','stale')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_session_memory": {
+      "name": "pathway_chat_session_memory",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "memoryNamespace": {
+          "name": "memoryNamespace",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "memoryKey": {
+          "name": "memoryKey",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valueJson": {
+          "name": "valueJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valueSource": {
+          "name": "valueSource",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assumed": {
+          "name": "assumed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "confidenceCap": {
+          "name": "confidenceCap",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'none'"
+        },
+        "sourceTurnIndex": {
+          "name": "sourceTurnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceEventId": {
+          "name": "sourceEventId",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "firstSetAt": {
+          "name": "firstSetAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "lastUpdatedAt": {
+          "name": "lastUpdatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expiresAt": {
+          "name": "expiresAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_session_memory_session_namespace_key_uidx": {
+          "name": "chat_session_memory_session_namespace_key_uidx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "memoryNamespace",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "memoryKey",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_session_memory_session_updated_idx": {
+          "name": "chat_session_memory_session_updated_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "lastUpdatedAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_session_memory_expiry_idx": {
+          "name": "chat_session_memory_expiry_idx",
+          "columns": [
+            {
+              "expression": "expiresAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_session_memory_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_session_memory_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_session_memory",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "pathway_chat_session_memory_sourceEventId_pathway_chat_memory_events_id_fk": {
+          "name": "pathway_chat_session_memory_sourceEventId_pathway_chat_memory_events_id_fk",
+          "tableFrom": "pathway_chat_session_memory",
+          "tableTo": "pathway_chat_memory_events",
+          "columnsFrom": [
+            "sourceEventId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_session_memory_namespace_check": {
+          "name": "chat_session_memory_namespace_check",
+          "value": "\"pathway_chat_session_memory\".\"memoryNamespace\" in ('baseline','location','preference','constraint','system','other')"
+        },
+        "chat_session_memory_value_source_check": {
+          "name": "chat_session_memory_value_source_check",
+          "value": "\"pathway_chat_session_memory\".\"valueSource\" in ('explicit','assumed','inferred','default')"
+        },
+        "chat_session_memory_confidence_cap_check": {
+          "name": "chat_session_memory_confidence_cap_check",
+          "value": "\"pathway_chat_session_memory\".\"confidenceCap\" in ('none','medium','low')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_sessions": {
+      "name": "pathway_chat_sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "startedAt": {
+          "name": "startedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "endedAt": {
+          "name": "endedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "cardType": {
+          "name": "cardType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'none'"
+        },
+        "locationCount": {
+          "name": "locationCount",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "promptVersion": {
+          "name": "promptVersion",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ruleVersion": {
+          "name": "ruleVersion",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "distinctId": {
+          "name": "distinctId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "traceId": {
+          "name": "traceId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "firstInsightLatencyMs": {
+          "name": "firstInsightLatencyMs",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hadFallback": {
+          "name": "hadFallback",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        }
+      },
+      "indexes": {
+        "chat_sessions_started_at_idx": {
+          "name": "chat_sessions_started_at_idx",
+          "columns": [
+            {
+              "expression": "startedAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_sessions_distinct_id_idx": {
+          "name": "chat_sessions_distinct_id_idx",
+          "columns": [
+            {
+              "expression": "distinctId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_sessions_status_check": {
+          "name": "chat_sessions_status_check",
+          "value": "\"pathway_chat_sessions\".\"status\" in ('active','ended','error')"
+        },
+        "chat_sessions_card_type_check": {
+          "name": "chat_sessions_card_type_check",
+          "value": "\"pathway_chat_sessions\".\"cardType\" in ('staffing','risk','opportunity','none')"
+        },
+        "chat_sessions_location_count_check": {
+          "name": "chat_sessions_location_count_check",
+          "value": "\"pathway_chat_sessions\".\"locationCount\" between 0 and 3"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_tool_calls": {
+      "name": "pathway_chat_tool_calls",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sessionId": {
+          "name": "sessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "messageId": {
+          "name": "messageId",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "turnIndex": {
+          "name": "turnIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "toolName": {
+          "name": "toolName",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceName": {
+          "name": "sourceName",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "argsJson": {
+          "name": "argsJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "resultJson": {
+          "name": "resultJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "latencyMs": {
+          "name": "latencyMs",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cacheHit": {
+          "name": "cacheHit",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "sourceFreshnessSeconds": {
+          "name": "sourceFreshnessSeconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "errorCode": {
+          "name": "errorCode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_tool_calls_session_turn_idx": {
+          "name": "chat_tool_calls_session_turn_idx",
+          "columns": [
+            {
+              "expression": "sessionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "turnIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_tool_calls_source_created_idx": {
+          "name": "chat_tool_calls_source_created_idx",
+          "columns": [
+            {
+              "expression": "sourceName",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_tool_calls_sessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_tool_calls_sessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_tool_calls",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "pathway_chat_tool_calls_messageId_pathway_chat_messages_id_fk": {
+          "name": "pathway_chat_tool_calls_messageId_pathway_chat_messages_id_fk",
+          "tableFrom": "pathway_chat_tool_calls",
+          "tableTo": "pathway_chat_messages",
+          "columnsFrom": [
+            "messageId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_tool_calls_source_name_check": {
+          "name": "chat_tool_calls_source_name_check",
+          "value": "\"pathway_chat_tool_calls\".\"sourceName\" in ('geocode','weather','events','closures','doe','reviews','memory')"
+        },
+        "chat_tool_calls_status_check": {
+          "name": "chat_tool_calls_status_check",
+          "value": "\"pathway_chat_tool_calls\".\"status\" in ('ok','error','timeout','stale')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_chat_user_preferences": {
+      "name": "pathway_chat_user_preferences",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "distinctId": {
+          "name": "distinctId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "preferenceNamespace": {
+          "name": "preferenceNamespace",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "preferenceKey": {
+          "name": "preferenceKey",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valueJson": {
+          "name": "valueJson",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valueSource": {
+          "name": "valueSource",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lastSessionId": {
+          "name": "lastSessionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "firstSetAt": {
+          "name": "firstSetAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "lastUpdatedAt": {
+          "name": "lastUpdatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expiresAt": {
+          "name": "expiresAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_user_preferences_distinct_namespace_key_uidx": {
+          "name": "chat_user_preferences_distinct_namespace_key_uidx",
+          "columns": [
+            {
+              "expression": "distinctId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "preferenceNamespace",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "preferenceKey",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_user_preferences_distinct_updated_idx": {
+          "name": "chat_user_preferences_distinct_updated_idx",
+          "columns": [
+            {
+              "expression": "distinctId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "lastUpdatedAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_user_preferences_expiry_idx": {
+          "name": "chat_user_preferences_expiry_idx",
+          "columns": [
+            {
+              "expression": "expiresAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pathway_chat_user_preferences_lastSessionId_pathway_chat_sessions_id_fk": {
+          "name": "pathway_chat_user_preferences_lastSessionId_pathway_chat_sessions_id_fk",
+          "tableFrom": "pathway_chat_user_preferences",
+          "tableTo": "pathway_chat_sessions",
+          "columnsFrom": [
+            "lastSessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_user_preferences_namespace_check": {
+          "name": "chat_user_preferences_namespace_check",
+          "value": "\"pathway_chat_user_preferences\".\"preferenceNamespace\" in ('baseline','ui','workflow','other')"
+        },
+        "chat_user_preferences_value_source_check": {
+          "name": "chat_user_preferences_value_source_check",
+          "value": "\"pathway_chat_user_preferences\".\"valueSource\" in ('explicit','inferred','default')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pathway_doe_calendar_days": {
+      "name": "pathway_doe_calendar_days",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "calendarDate": {
+          "name": "calendarDate",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "eventType": {
+          "name": "eventType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "isSchoolDay": {
+          "name": "isSchoolDay",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceUpdatedAt": {
+          "name": "sourceUpdatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "doe_calendar_days_date_uidx": {
+          "name": "doe_calendar_days_date_uidx",
+          "columns": [
+            {
+              "expression": "calendarDate",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "doe_calendar_days_school_day_idx": {
+          "name": "doe_calendar_days_school_day_idx",
+          "columns": [
+            {
+              "expression": "isSchoolDay",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "calendarDate",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pathway_post": {
+      "name": "pathway_post",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "byDefault",
+            "name": "pathway_post_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(256)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "post_name_idx": {
+          "name": "post_name_idx",
+          "columns": [
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pathway_source_runs": {
+      "name": "pathway_source_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sourceName": {
+          "name": "sourceName",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "runStartedAt": {
+          "name": "runStartedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "runFinishedAt": {
+          "name": "runFinishedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "itemsFetched": {
+          "name": "itemsFetched",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "latestRecordAt": {
+          "name": "latestRecordAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "errorMessage": {
+          "name": "errorMessage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "source_runs_name_finished_idx": {
+          "name": "source_runs_name_finished_idx",
+          "columns": [
+            {
+              "expression": "sourceName",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "runFinishedAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "source_runs_source_name_check": {
+          "name": "source_runs_source_name_check",
+          "value": "\"pathway_source_runs\".\"sourceName\" in ('weather','events','closures','doe','reviews')"
+        },
+        "source_runs_status_check": {
+          "name": "source_runs_status_check",
+          "value": "\"pathway_source_runs\".\"status\" in ('ok','error','partial')"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

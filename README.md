@@ -74,7 +74,8 @@ src/
 ├── server/
 │   ├── api/
 │   │   ├── routers/        # tRPC routers
-│   │   │   ├── ai.ts       # AI chat endpoints
+│   │   │   ├── intelligence.ts # Staffing intelligence chat
+│   │   │   ├── ai.ts       # AI utility endpoints
 │   │   │   ├── weather.ts  # Weather data
 │   │   │   ├── events.ts   # Ticketmaster events
 │   │   │   └── places.ts   # Google Places
@@ -85,6 +86,7 @@ src/
 │       ├── openrouter.ts
 │       ├── weather.ts
 │       ├── ticketmaster.ts
+│       ├── nyc-dot.ts
 │       └── google-places.ts
 ├── styles/
 │   └── globals.css         # Tailwind + brand tokens
@@ -119,6 +121,9 @@ cp .env.example .env
 # Push database schema
 pnpm db:push
 
+# Seed DOE calendar rows (replace seed file with official DOE-normalized rows for production)
+pnpm doe:seed
+
 # Start development server
 pnpm dev
 ```
@@ -133,7 +138,6 @@ pnpm dev
 | `OPENWEATHER_API_KEY` | OpenWeather API key | Yes |
 | `TICKETMASTER_API_KEY` | Ticketmaster API key | Yes |
 | `GOOGLE_PLACES_API_KEY` | Google Places API key | Yes |
-| `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | Mapbox token (maps) | No |
 | `NEXT_PUBLIC_POSTHOG_KEY` | PostHog project key | No |
 | `NEXT_PUBLIC_POSTHOG_HOST` | PostHog host URL | No |
 

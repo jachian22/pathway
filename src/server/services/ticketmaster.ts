@@ -151,5 +151,8 @@ export async function searchVenues(params: {
     throw new Error(`Ticketmaster API error: ${response.status} - ${error}`);
   }
 
-  return response.json();
+  return response.json() as Promise<{
+    _embedded?: { venues: EventVenue[] };
+    page: EventSearchResponse["page"];
+  }>;
 }

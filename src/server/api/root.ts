@@ -3,6 +3,7 @@ import { aiRouter } from "@/server/api/routers/ai";
 import { weatherRouter } from "@/server/api/routers/weather";
 import { eventsRouter } from "@/server/api/routers/events";
 import { placesRouter } from "@/server/api/routers/places";
+import { intelligenceRouter } from "@/server/api/routers/intelligence";
 import { createCallerFactory, createTRPCRouter } from "@/server/api/trpc";
 
 /**
@@ -16,6 +17,7 @@ export const appRouter = createTRPCRouter({
   weather: weatherRouter,
   events: eventsRouter,
   places: placesRouter,
+  intelligence: intelligenceRouter,
 });
 
 // export type definition of API

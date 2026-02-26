@@ -7,8 +7,8 @@ import { TRPCReactProvider } from "@/trpc/react";
 import { PostHogProvider } from "@/app/_components/posthog-provider";
 
 export const metadata: Metadata = {
-  title: "Pathway",
-  description: "AI-powered activity planning for NYC",
+  title: "Pathway | Restaurant Intelligence",
+  description: "Plan staffing and prep for the next 3 days across your NYC locations.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 

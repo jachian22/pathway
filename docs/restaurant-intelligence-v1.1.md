@@ -9,6 +9,34 @@ Related: `docs/analytics-emission-plan.md` for exact event emission ownership an
 Related: `docs/memory-review-db-schema-v1.1.md` for migration-ready memory and review evidence tables.
 Related: `BRAND.md` for required visual and voice guidelines.
 
+## 0) Gate Remediation Notes (2026-02-25)
+
+Implemented from blocking-gate findings:
+
+1. Assistant response terminal invariant:
+
+- Every response now ends with a schema-compliant final action line (even when a follow-up question is present).
+
+2. Location noise rejection hardening:
+
+- Very short ambiguous location tokens are rejected before provider lookup to prevent false-positive matches.
+
+3. One-question clarification flow:
+
+- Ambiguous multi-location baseline scope prompts exactly one clarification, then defaults to first-mentioned location if still unresolved.
+
+4. Assumption correction auditability:
+
+- Added `assumption_corrected` persistence/emission path when explicit baseline replaces prior assumption.
+
+5. Source-status semantics normalization:
+
+- Distinguishes `ok` (including no nearby events) from `stale`/`error`/`timeout`.
+
+6. Ticketmaster datetime compatibility:
+
+- Discovery API requests must use `YYYY-MM-DDTHH:mm:ssZ` (no fractional seconds).
+
 ## 1) Product Contract
 
 Primary promise: **Plan staffing and prep for the next 3 days across your NYC locations.**
@@ -92,6 +120,9 @@ Error behavior:
 
 - Invalid entries are rejected per-item, valid entries continue.
 - UI always shows partial progress (`2 valid, 1 needs correction`).
+- Reject short ambiguous free-text tokens (`<3` chars) before provider lookup unless token is ZIP/address-like.
+- Invalid-input rejection copy should remain corrective and specific, e.g.:
+  - "I couldn't confidently match that to a NYC location. Please share a fuller NYC address, ZIP, or neighborhood (for example: 350 5th Ave, 11201, or Astoria)."
 
 ## 6) Intelligence Engine Contract
 
@@ -199,6 +230,14 @@ Hard confidence caps:
 - If primary source freshness exceeds stale alert threshold, cap at `low`.
 - If all sources are unavailable, force `low` and `source=system`.
 
+### 7.6.1 Clarification policy (implemented)
+
+- Ask at most one clarification question for ambiguous baseline scope in multi-location sessions:
+  - "Apply to all locations or just first-mentioned location?"
+- If unresolved on the next user turn, default to first-mentioned location and continue.
+- Emit `assumption_set` when defaulting scope.
+- Emit `assumption_corrected` when user later supplies explicit baseline/scope.
+
 ### 7.7 Reviews diagnostic rules (first-class)
 
 - Reviews are a modifier that helps choose role-specific staffing actions (host vs FOH vs BOH), not a standalone demand forecaster.
@@ -242,10 +281,12 @@ For every recommendation that references review signals:
 1. Include `evidenceCount` and `recencyWindowDays`.
 2. Include at least one reference in `topRefs` with `publishTime` and `theme`.
 3. Provide review context on demand (`show evidence`) with:
-  - review date/time
-  - rating (if available)
-  - short excerpt/snippet
-  - place identifier
+
+- review date/time
+- rating (if available)
+- short excerpt/snippet
+- place identifier
+
 4. If references are old or sparse, recommendation confidence must be downgraded.
 5. Use direct quote snippets only in evidence mode; summary copy should default to paraphrase.
 6. Limit direct quote snippets to short fragments; avoid full raw review body rendering/storage.
@@ -260,6 +301,13 @@ Fallback precedence:
 4. If events unavailable: explicitly note event blind spot and continue.
 5. If reviews unavailable: continue with external signals and mark diagnostic gap in explanation.
 6. If all sources unavailable: return 24h conservative operating guidance and recheck advice.
+
+Source status semantics:
+
+- `ok`: source request succeeded, including zero relevant nearby impacts.
+- `stale`: partial source success or stale-cache path.
+- `error`: source unavailable (all attempts failed).
+- `timeout`: source timed out.
 
 All-source-down response (canonical):
 
@@ -319,6 +367,10 @@ DOE ingestion rule:
 
 - Do not parse DOE PDF at request time.
 - Precompute and store calendar rows (`date`, `event_type`, `is_school_day`, `source_updated_at`) and query locally during chat turns.
+- Use the seed loader for normalized rows:
+  - `pnpm doe:seed -- --file data/doe-calendar.seed.csv`
+  - optional reset: `pnpm doe:seed -- --file data/doe-calendar.seed.csv --truncate`
+- `data/doe-calendar.seed.csv` is a starter seed file; replace with official DOE-normalized dates for production.
 
 Reviews usage rule:
 
@@ -366,13 +418,18 @@ Use layered memory to balance UX continuity, latency, and data minimization.
 Layers:
 
 1. Working memory (per turn, ephemeral)
-  - Tool payloads, temporary assumptions, recommendation draft fields.
-  - Not persisted after response finalization.
+
+- Tool payloads, temporary assumptions, recommendation draft fields.
+- Not persisted after response finalization.
+
 2. Session memory (persistent by `session_id`)
-  - Current locations, card type, baseline values, assumption flags, corrections.
+
+- Current locations, card type, baseline values, assumption flags, corrections.
+
 3. Light cross-session memory (persistent by `distinct_id`, best-effort)
-  - Structured preferences only (example: baseline scope default, preferred daypart labels).
-  - No full transcript replay memory.
+
+- Structured preferences only (example: baseline scope default, preferred daypart labels).
+- No full transcript replay memory.
 
 Write/update rules:
 
@@ -441,11 +498,15 @@ Brand compliance (required):
 
 1. Use brand color tokens from `src/styles/globals.css` (`cream`, `charcoal`, `forest`, surface/message tokens).
 2. Use approved typography:
-  - headline/section: serif italic (`Playfair Display`)
-  - body/components: sans (`Geist Sans`)
+
+- headline/section: serif italic (`Playfair Display`)
+- body/components: sans (`Geist Sans`)
+
 3. Chat bubbles follow brand system:
-  - user bubble: forest + white text, right-aligned
-  - assistant bubble: surface-1 + charcoal text, subtle border
+
+- user bubble: forest + white text, right-aligned
+- assistant bubble: surface-1 + charcoal text, subtle border
+
 4. Use forest focus rings for interactive states.
 5. Preserve approachable/confident/human tone in assistant copy; avoid robotic phrasing in summary blocks.
 6. Keep primary CTA button style as charcoal pill and secondary as outlined pill per `BRAND.md`.
@@ -503,16 +564,20 @@ Scope for v1.2:
 
 1. Post-insight CTA: `Email me a refresh + to-do list`
 2. Collect fields:
-  - `email`
-  - `session_id`
-  - `location_set_id`
-  - `scheduled_send_at`
-  - `consent` (explicit)
+
+- `email`
+- `session_id`
+- `location_set_id`
+- `scheduled_send_at`
+- `consent` (explicit)
+
 3. Send one-off email containing:
-  - top recommendations
-  - time windows
-  - confidence/source/freshness
-  - clear generated-at timestamp
+
+- top recommendations
+- time windows
+- confidence/source/freshness
+- clear generated-at timestamp
+
 4. Include unsubscribe link and preference-reset endpoint.
 
 Delivery modes (v1.2):

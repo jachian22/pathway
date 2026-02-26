@@ -373,6 +373,69 @@ Scope: Chat agent architecture and execution policy for Restaurant Intelligence
 - Revisit when:
   - Brand system is intentionally revised.
 
+## ADR-020: Terminal action-line invariant for assistant responses
+
+- Status: Accepted
+- Decision:
+  - Assistant may include conversational follow-up prompts.
+  - The final line of every assistant response must be a schema-compliant action line:
+    - `[Action] + [Time Window] + [Confidence] + [Source + Freshness]`
+- Why:
+  - Ensures every turn ends with an immediately actionable takeaway.
+  - Keeps response parsing deterministic for QA and observability gates.
+- Alternatives considered:
+  - End on a question when present.
+- Tradeoffs:
+  - Slightly repetitive copy in some turns.
+- Guardrails:
+  - If no recommendations exist, final line must still be a conservative fallback action line.
+- Revisit when:
+  - Interaction model changes to a non-turn-based or card-only UI.
+
+## ADR-021: Low-friction ambiguity handling (reject noisy input, ask one scope clarification)
+
+- Status: Accepted
+- Decision:
+  - Reject ultra-short ambiguous location text before provider lookup (`<3` chars unless valid ZIP/address-like).
+  - Use friendlier corrective copy with examples.
+  - For ambiguous multi-location baseline input, ask exactly one clarification:
+    - "all locations or first-mentioned location?"
+  - If unresolved on next user turn, default to first-mentioned location and continue.
+- Why:
+  - Prevents false-positive place matches from noisy input (e.g., single-character tokens).
+  - Maintains momentum without repeated interrogations.
+- Alternatives considered:
+  - Always attempt provider lookup.
+  - Block until explicit user clarification.
+- Tradeoffs:
+  - Some shorthand input that users intend may be rejected.
+  - One-question limit can still misread edge-case intent.
+- Guardrails:
+  - Explicit user corrections always override assumptions.
+  - Emit `assumption_set` and `assumption_corrected` for auditability.
+- Revisit when:
+  - Input quality data suggests threshold tuning (`>=2` vs `>=3`) is needed.
+
+## ADR-022: External-source status semantics must separate "no signal" from "provider failure"
+
+- Status: Accepted
+- Decision:
+  - `ok`: source request succeeded, including zero relevant nearby results.
+  - `stale`: partial source success or stale-cache path.
+  - `error`: source unavailable (all attempts failed).
+  - `timeout`: source call exceeded timeout budget.
+- Why:
+  - "No nearby events" is not an outage and must not be represented as failure.
+  - Prevents incorrect fallback interpretation in product and ops dashboards.
+- Alternatives considered:
+  - Single catch-all error status for empty/failed results.
+- Tradeoffs:
+  - Slightly more status-mapping logic in adapters.
+- Guardrails:
+  - Include `errorCode` for degraded statuses to improve debugging.
+- Revisit when:
+  - Provider mix expands and unified status taxonomy needs revision.
+
 ## Open Questions (Next Design Session)
 
 1. Persona-specific variants after default balanced mode is stable (owner vs ops manager).

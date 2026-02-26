@@ -151,6 +151,6 @@ export async function getNearbyPlaces(params: {
   return data.places ?? [];
 }
 
-export function getPhotoUrl(photoName: string, maxWidth: number = 400): string {
+export function getPhotoUrl(photoName: string, maxWidth = 400): string {
   return `${BASE_URL}/${photoName}/media?maxWidthPx=${maxWidth}&key=${env.GOOGLE_PLACES_API_KEY}`;
 }
