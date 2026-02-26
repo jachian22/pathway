@@ -517,9 +517,6 @@ export function StaffingChat() {
       withFollowup && !pendingClarification
         ? parseBaselineMessage(withFollowup, locationLabels)
         : undefined;
-    let responseModeHint: "plan" | "refine" | undefined = withFollowup
-      ? "refine"
-      : "plan";
 
     if (
       withFollowup &&
@@ -530,11 +527,6 @@ export function StaffingChat() {
         withFollowup,
         baselineParsedForIntent,
       );
-      responseModeHint =
-        followupIntent === "new_insight_request" &&
-        looksLikeNewInsightRequest(withFollowup)
-          ? "plan"
-          : "refine";
       captureEvent("followup_intent_routed", {
         intent: followupIntent,
         used_full_summary:
@@ -662,7 +654,6 @@ export function StaffingChat() {
       distinctId,
       idempotencyKey: params?.idempotencyKey ?? makeIdempotencyKey(),
       cardType: selectedCard,
-      responseModeHint,
       locations: locationsForRequest,
       competitorName: competitorNameForRequest || undefined,
       baselineContext,

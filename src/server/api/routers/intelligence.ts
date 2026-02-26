@@ -7,7 +7,6 @@ import {
 } from "@/server/services/intelligence/orchestrator";
 
 const cardTypeSchema = z.enum(["staffing", "risk", "opportunity"]);
-const responseModeHintSchema = z.enum(["plan", "refine"]);
 
 const baselineSchema = z.object({
   locationLabel: z.string(),
@@ -20,7 +19,6 @@ const firstInsightInputSchema = z.object({
   distinctId: z.string().optional(),
   idempotencyKey: z.string().min(8).max(128).optional(),
   cardType: cardTypeSchema,
-  responseModeHint: responseModeHintSchema.optional(),
   locations: z.array(z.string().min(1)).min(1).max(3),
   baselineContext: z.array(baselineSchema).optional(),
   competitorName: z.string().optional(),
