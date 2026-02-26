@@ -157,22 +157,6 @@ function buildMessage(output: {
       : "Next 3 days staffing and prep signals:";
   const lines: string[] = [headline];
 
-  const topRecommendation = output.recommendations[0];
-  if (topRecommendation) {
-    lines.push("", `Top action: ${topRecommendation.action}`);
-  }
-
-  const topDriver = topRecommendation?.explanation.why[0]?.trim();
-  if (topDriver && topDriver.length > 0) {
-    lines.push(`Why now: ${topDriver}`);
-  }
-
-  if (output.recommendations.length > 1) {
-    lines.push(
-      `I added ${output.recommendations.length - 1} more actions in the cards below.`,
-    );
-  }
-
   if (output.recommendations.length > 0) {
     lines.push(
       "",

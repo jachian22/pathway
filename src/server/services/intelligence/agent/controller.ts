@@ -514,13 +514,7 @@ function buildMessage(params: {
   followUpQuestion?: string;
 }): string {
   const lines: string[] = [params.narrative.trim()];
-  const top = params.recommendations[0];
-  if (top) {
-    lines.push("", `Top action: ${top.action}`);
-    const sourceLine = `${top.confidence} confidence · source ${top.sourceName}`;
-    lines.push(sourceLine);
-  }
-  if (params.followUpQuestion) {
+  if (params.followUpQuestion && params.recommendations.length > 0) {
     lines.push("", params.followUpQuestion);
   }
   return lines.join("\n");
