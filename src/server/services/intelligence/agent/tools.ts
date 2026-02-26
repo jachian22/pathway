@@ -23,17 +23,10 @@ import {
 import { TurnCircuitBreaker } from "@/server/services/intelligence/agent/circuit-breaker";
 import { getCardProfile } from "@/server/services/intelligence/agent/card-profile";
 
-interface CompetitorContext {
-  placeId?: string;
-  resolvedName?: string;
-  status: "not_requested" | "limit_reached" | "not_found" | "resolved";
-}
-
 interface CreateAgentToolsInput {
   db: DbClient;
   cardType: CardType;
   resolvedLocations: ResolvedLocation[];
-  competitor: CompetitorContext;
 }
 
 interface SourceState {
@@ -58,7 +51,6 @@ export interface AgentSourceSnapshot {
   closuresByLocation: Record<string, ClosureSignal[]>;
   doeDays: DoeSignal[];
   reviewByLocation: Record<string, ReviewSignals>;
-  competitorReview: ReviewSignals | null;
 }
 
 function defaultSourceStatus(): SourceStatus {
@@ -235,16 +227,6 @@ export function createAgentTools(input: CreateAgentToolsInput): {
         },
       },
     },
-    {
-      name: "get_competitor_reviews",
-      description:
-        "Get one competitor's review snapshot when competitor is already resolved for this session.",
-      parameters: {
-        type: "object",
-        additionalProperties: false,
-        properties: {},
-      },
-    },
   ];
 
   const executeTool = async (params: {
@@ -361,38 +343,6 @@ export function createAgentTools(input: CreateAgentToolsInput): {
       );
     }
 
-    if (params.name === "get_competitor_reviews") {
-      return run(
-        "reviews",
-        async () => {
-          if (
-            input.competitor.status !== "resolved" ||
-            !input.competitor.placeId
-          ) {
-            return;
-          }
-          if (!state.reviews) {
-            state.reviews = await fetchReviewsSource(
-              input.resolvedLocations,
-              input.competitor.placeId,
-            );
-            sourceStatuses.reviews = state.reviews.status;
-          }
-        },
-        params.name,
-        params.args,
-        () => ({
-          competitorStatus: input.competitor.status,
-          competitorName: input.competitor.resolvedName ?? null,
-          competitorReview:
-            input.competitor.status === "resolved"
-              ? (state.reviews?.competitorReview ?? null)
-              : null,
-          sourceStatus: sourceStatuses.reviews,
-        }),
-      );
-    }
-
     return {
       toolName: params.name,
       sourceName: "system",
@@ -421,14 +371,6 @@ export function createAgentTools(input: CreateAgentToolsInput): {
       baseCalls.push(executeTool({ name: "get_reviews", args: {} }));
     }
 
-    if (
-      cardProfile.prefetch.competitor &&
-      input.competitor.status === "resolved" &&
-      input.competitor.placeId
-    ) {
-      baseCalls.push(executeTool({ name: "get_competitor_reviews", args: {} }));
-    }
-
     return Promise.all(baseCalls);
   };
 
@@ -436,7 +378,7 @@ export function createAgentTools(input: CreateAgentToolsInput): {
 
   const getReviewSignals = () => ({
     byLocation: state.reviews?.byLocation ?? {},
-    competitorReview: state.reviews?.competitorReview ?? null,
+    competitorReview: null,
   });
 
   const getSourceSnapshot = (): AgentSourceSnapshot => ({
@@ -445,7 +387,6 @@ export function createAgentTools(input: CreateAgentToolsInput): {
     closuresByLocation: state.closures?.byLocation ?? {},
     doeDays: state.doe?.days ?? [],
     reviewByLocation: state.reviews?.byLocation ?? {},
-    competitorReview: state.reviews?.competitorReview ?? null,
   });
 
   return {

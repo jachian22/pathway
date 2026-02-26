@@ -342,7 +342,6 @@ export function buildRecommendations(
   inputs: LocationInputs[],
   options?: {
     doeDays?: DoeSignal[];
-    competitorSnapshot?: string;
   },
 ): RecommendationEngineOutput {
   const recommendations: Recommendation[] = [];
@@ -409,9 +408,6 @@ export function buildRecommendations(
     summaryLines.push(
       `- ${recommendation.action} (${recommendation.confidence})`,
     );
-  }
-  if (options?.competitorSnapshot) {
-    summaryLines.push(options.competitorSnapshot);
   }
 
   return {

@@ -468,6 +468,30 @@ export async function fetchReviewsSource(
   }
 }
 
+export async function fetchCompetitorReviewSource(
+  competitorPlaceId?: string,
+): Promise<{
+  competitorReview: ReviewSignals | null;
+  status: SourceStatus;
+}> {
+  if (!competitorPlaceId) {
+    return {
+      competitorReview: null,
+      status: {
+        status: "ok",
+        freshnessSeconds: 0,
+        cacheHit: true,
+      },
+    };
+  }
+
+  const reviews = await fetchReviewsSource([], competitorPlaceId);
+  return {
+    competitorReview: reviews.competitorReview,
+    status: reviews.status,
+  };
+}
+
 export async function fetchSourceBundle(
   dbClient: DbClient,
   locations: ResolvedLocation[],

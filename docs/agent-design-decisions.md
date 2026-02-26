@@ -492,6 +492,30 @@ Scope: Chat agent architecture and execution policy for Restaurant Intelligence
 - Revisit when:
   - User feedback suggests profile weighting or prefetch policy needs retuning.
 
+## ADR-025: Competitor analysis is decoupled from core card synthesis
+
+- Status: Accepted
+- Decision:
+  - Core card synthesis (`staffing`, `risk`, `opportunity`) runs without competitor context.
+  - Competitor analysis is executed as a separate, optional post-core step only when competitor input is present.
+  - Competitor output is rendered as a separate snapshot block, not embedded in core summary generation.
+- Why:
+  - Reduces first-turn token pressure and truncation risk in core agent output.
+  - Prevents competitor failures from degrading primary staffing/risk/opportunity recommendations.
+  - Keeps card behavior intent clean and easier to evaluate.
+- Alternatives considered:
+  - Keep competitor integrated into all card paths.
+  - Include competitor only for `opportunity` card.
+- Tradeoffs:
+  - One extra optional source step when competitor is supplied.
+  - Slightly more orchestration complexity for persistence/logging paths.
+- Guardrails:
+  - One competitor check per session remains enforced.
+  - Core insight never blocks on competitor fetch.
+  - Competitor tool call is logged separately for diagnostics.
+- Revisit when:
+  - We add explicit “competitor mode” or multi-competitor workflows.
+
 ## Open Questions (Next Design Session)
 
 1. Persona-specific variants after default balanced mode is stable (owner vs ops manager).

@@ -29,13 +29,6 @@ import {
   type SourceStatus,
 } from "@/server/services/intelligence/types";
 
-interface CompetitorInput {
-  placeId?: string;
-  snapshot?: string;
-  resolvedName?: string;
-  status: "not_requested" | "limit_reached" | "not_found" | "resolved";
-}
-
 interface AgentTurnInput {
   db: DbClient;
   sessionId: string;
@@ -44,8 +37,6 @@ interface AgentTurnInput {
   resolvedLocations: ResolvedLocation[];
   baselineByLocation: Map<string, number>;
   baselineAssumedForFirstLocation: boolean;
-  competitor: CompetitorInput;
-  competitorName?: string;
 }
 
 interface Snapshot {
@@ -176,12 +167,6 @@ interface SignalPack {
     date: string;
     eventType: string;
   }[];
-  competitor: {
-    label: string;
-    topTheme: string | null;
-    evidenceCount: number;
-    recencyWindowDays: number;
-  } | null;
   sourceStatus: {
     weather: SourceStatus["status"];
     events: SourceStatus["status"];
@@ -209,7 +194,6 @@ function buildDeterministicSignalPack(params: {
   resolvedLocations: ResolvedLocation[];
   sourceSnapshot: AgentSourceSnapshot;
   sourceStatuses: AgentTurnOutput["sources"];
-  competitor: CompetitorInput;
 }): SignalPack {
   const locations = params.resolvedLocations.map((location) => {
     const weather = params.sourceSnapshot.weatherByLocation[location.label];
@@ -264,22 +248,10 @@ function buildDeterministicSignalPack(params: {
       eventType: day.eventType,
     }));
 
-  const competitorReview = params.sourceSnapshot.competitorReview;
-  const competitor =
-    params.competitor.status === "resolved" && competitorReview
-      ? {
-          label: params.competitor.resolvedName ?? "Competitor",
-          topTheme: topReviewTheme(competitorReview),
-          evidenceCount: competitorReview.evidenceCount,
-          recencyWindowDays: competitorReview.recencyWindowDays,
-        }
-      : null;
-
   return {
     window: "next_3_days",
     locations,
     doe,
-    competitor,
     sourceStatus: {
       weather: params.sourceStatuses.weather.status,
       events: params.sourceStatuses.events.status,
@@ -318,11 +290,6 @@ function buildDeterministicSignalPackSummary(signalPack: SignalPack): string {
   if (signalPack.doe.length > 0) {
     lines.push(
       `DOE modifiers: ${signalPack.doe.map((d) => `${d.date} ${d.eventType}`).join(", ")}`,
-    );
-  }
-  if (signalPack.competitor) {
-    lines.push(
-      `Competitor ${signalPack.competitor.label}: theme=${signalPack.competitor.topTheme ?? "mixed"} (${signalPack.competitor.evidenceCount} refs)`,
     );
   }
   lines.push(
@@ -522,7 +489,6 @@ function buildMessage(params: {
   narrative: string;
   recommendations: Recommendation[];
   followUpQuestion?: string;
-  competitorSnapshot?: AgentTurnOutput["competitorSnapshot"];
 }): string {
   const lines: string[] = [params.narrative.trim()];
   const top = params.recommendations[0];
@@ -530,9 +496,6 @@ function buildMessage(params: {
     lines.push("", `Top action: ${top.action}`);
     const sourceLine = `${top.confidence} confidence · source ${top.sourceName}`;
     lines.push(sourceLine);
-  }
-  if (params.competitorSnapshot) {
-    lines.push("", `Competitor check: ${params.competitorSnapshot.label}.`);
   }
   if (params.followUpQuestion) {
     lines.push("", params.followUpQuestion);
@@ -557,56 +520,6 @@ function buildSnapshots(
       };
     })
     .filter((value): value is Snapshot => value !== null);
-}
-
-function buildCompetitorSnapshot(
-  competitor: CompetitorInput,
-  competitorName: string | undefined,
-  competitorReview: ReviewSignals | null,
-): AgentTurnOutput["competitorSnapshot"] {
-  if (competitor.status === "not_requested") {
-    return undefined;
-  }
-  if (competitor.status === "limit_reached") {
-    return {
-      label: "Competitor check",
-      text: "Already used in this session. You can run one competitor check per chat.",
-      confidence: "low",
-      sampleReviewCount: 0,
-      recencyWindowDays: 90,
-      status: "limit_reached",
-    };
-  }
-  if (competitor.status === "not_found") {
-    return {
-      label: competitorName ?? "Competitor",
-      text:
-        competitor.snapshot ??
-        "Could not resolve competitor from places search.",
-      confidence: "low",
-      sampleReviewCount: 0,
-      recencyWindowDays: 90,
-      status: "not_found",
-    };
-  }
-  if (competitorReview) {
-    return {
-      label: competitor.resolvedName ?? "Competitor",
-      text: competitorReview.guestSnapshot,
-      confidence: competitorReview.confidence,
-      sampleReviewCount: competitorReview.sampleReviewCount,
-      recencyWindowDays: competitorReview.recencyWindowDays,
-      status: "resolved_with_reviews",
-    };
-  }
-  return {
-    label: competitor.resolvedName ?? "Competitor",
-    text: "Resolved successfully, but there is not enough recent review evidence to summarize yet.",
-    confidence: "low",
-    sampleReviewCount: 0,
-    recencyWindowDays: 90,
-    status: "resolved_no_recent_reviews",
-  };
 }
 
 function fallbackRecommendation(locationLabel: string): Recommendation {
@@ -641,7 +554,7 @@ export async function runAgentTurn(
     cardType: input.cardType,
     locations: input.resolvedLocations,
     baselineByLocation: input.baselineByLocation,
-    competitorName: input.competitorName,
+    competitorName: undefined,
     baselineAssumedForFirstLocation: input.baselineAssumedForFirstLocation,
   });
   const cardProfile = getCardProfile(input.cardType);
@@ -650,7 +563,6 @@ export async function runAgentTurn(
     db: input.db,
     cardType: input.cardType,
     resolvedLocations: input.resolvedLocations,
-    competitor: input.competitor,
   });
 
   const turnStartedAtMs = Date.now();
@@ -692,7 +604,6 @@ export async function runAgentTurn(
     resolvedLocations: input.resolvedLocations,
     sourceSnapshot: sourceSnapshotAfterPrefetch,
     sourceStatuses: sourceStatusesAfterPrefetch,
-    competitor: input.competitor,
   });
   const deterministicSignalPackSummary = buildDeterministicSignalPackSummary(
     deterministicSignalPack,
@@ -745,7 +656,6 @@ export async function runAgentTurn(
       resolvedLocations: input.resolvedLocations,
       sourceSnapshot: refreshedSourceSnapshot,
       sourceStatuses: refreshedSourceStatuses,
-      competitor: input.competitor,
     });
     const refreshedSummary =
       buildDeterministicSignalPackSummary(refreshedSignalPack);
@@ -1016,18 +926,12 @@ export async function runAgentTurn(
     policyApplied.recommendations.length > 0
       ? policyApplied.recommendations
       : [fallbackRecommendation(firstLocationLabel ?? "your locations")];
-  const competitorSnapshot = buildCompetitorSnapshot(
-    input.competitor,
-    input.competitorName,
-    reviewSignals.competitorReview,
-  );
   const message = buildMessage({
     narrative:
       parsed?.narrative ??
       "Live model synthesis is temporarily unavailable, so I am using a conservative operating fallback.",
     recommendations,
     followUpQuestion: policyApplied.followUpQuestion,
-    competitorSnapshot,
   });
 
   return {
@@ -1038,7 +942,7 @@ export async function runAgentTurn(
       input.resolvedLocations,
       reviewSignals.byLocation,
     ),
-    competitorSnapshot,
+    competitorSnapshot: undefined,
     sources: sourceStatuses,
     toolExecutions,
     reviewSignals,

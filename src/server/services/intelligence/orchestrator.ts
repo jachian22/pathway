@@ -25,7 +25,10 @@ import {
 } from "@/server/services/intelligence/constants";
 import { resolveLocations } from "@/server/services/intelligence/location";
 import { buildRecommendations } from "@/server/services/intelligence/recommendation-engine";
-import { fetchSourceBundle } from "@/server/services/intelligence/sources";
+import {
+  fetchCompetitorReviewSource,
+  fetchSourceBundle,
+} from "@/server/services/intelligence/sources";
 import {
   type CardType,
   type Recommendation,
@@ -145,7 +148,6 @@ async function safeSideEffect(
 function buildMessage(output: {
   summary: string;
   recommendations: Recommendation[];
-  competitorSnapshot?: FirstInsightOutput["competitorSnapshot"];
   followUpPrompt?: string;
 }): string {
   const summaryHeadline = output.summary.split("\n")[0]?.trim();
@@ -163,13 +165,6 @@ function buildMessage(output: {
   const topDriver = topRecommendation?.explanation.why[0]?.trim();
   if (topDriver && topDriver.length > 0) {
     lines.push(`Why now: ${topDriver}`);
-  }
-
-  if (output.competitorSnapshot) {
-    lines.push(
-      "",
-      `Competitor check: ${output.competitorSnapshot.label} (${output.competitorSnapshot.confidence}).`,
-    );
   }
 
   if (output.recommendations.length > 1) {
@@ -340,6 +335,130 @@ async function resolveCompetitor(
     placeId: resolved.id,
     resolvedName: resolved.displayName.text,
     snapshot: `Competitor check resolved: ${resolved.displayName.text}.`,
+  };
+}
+
+async function runSeparateCompetitorAnalysis(params: {
+  competitor: Awaited<ReturnType<typeof resolveCompetitor>>;
+  competitorName?: string;
+}): Promise<{
+  competitorSnapshotForUi?: FirstInsightOutput["competitorSnapshot"];
+  competitorReviewForPersistence: {
+    placeId: string;
+    sampleReviewCount: number;
+    evidenceCount: number;
+    recencyWindowDays: number;
+    themes: Record<string, number>;
+  } | null;
+  competitorToolCall: {
+    toolName: string;
+    sourceName: "reviews";
+    status: "ok" | "error" | "stale" | "timeout";
+    latencyMs: number;
+    cacheHit?: boolean;
+    sourceFreshnessSeconds?: number;
+    errorCode?: string;
+    resultJson?: Record<string, unknown>;
+  } | null;
+}> {
+  if (params.competitor.status === "not_requested") {
+    return {
+      competitorSnapshotForUi: undefined,
+      competitorReviewForPersistence: null,
+      competitorToolCall: null,
+    };
+  }
+
+  if (params.competitor.status === "limit_reached") {
+    return {
+      competitorSnapshotForUi: {
+        label: "Competitor check",
+        text: "Already used in this session. You can run one competitor check per chat.",
+        confidence: "low",
+        sampleReviewCount: 0,
+        recencyWindowDays: 90,
+        status: "limit_reached",
+      },
+      competitorReviewForPersistence: null,
+      competitorToolCall: null,
+    };
+  }
+
+  if (params.competitor.status === "not_found") {
+    return {
+      competitorSnapshotForUi: {
+        label: params.competitorName ?? "Competitor",
+        text:
+          params.competitor.snapshot ??
+          "Could not resolve this competitor from places search.",
+        confidence: "low",
+        sampleReviewCount: 0,
+        recencyWindowDays: 90,
+        status: "not_found",
+      },
+      competitorReviewForPersistence: null,
+      competitorToolCall: null,
+    };
+  }
+
+  const startedAtMs = nowMs();
+  const competitorSource = await fetchCompetitorReviewSource(
+    params.competitor.placeId,
+  );
+
+  const competitorToolCall = {
+    toolName: "get_competitor_reviews",
+    sourceName: "reviews" as const,
+    status: competitorSource.status.status,
+    latencyMs: nowMs() - startedAtMs,
+    cacheHit: competitorSource.status.cacheHit,
+    sourceFreshnessSeconds: competitorSource.status.freshnessSeconds,
+    errorCode: competitorSource.status.errorCode,
+    resultJson: competitorSource.competitorReview
+      ? {
+          placeId: competitorSource.competitorReview.placeId,
+          sampleReviewCount:
+            competitorSource.competitorReview.sampleReviewCount,
+          evidenceCount: competitorSource.competitorReview.evidenceCount,
+          recencyWindowDays:
+            competitorSource.competitorReview.recencyWindowDays,
+          themes: competitorSource.competitorReview.themes,
+        }
+      : {},
+  };
+
+  if (competitorSource.competitorReview) {
+    return {
+      competitorSnapshotForUi: {
+        label: params.competitor.resolvedName ?? "Competitor",
+        text: competitorSource.competitorReview.guestSnapshot,
+        confidence: competitorSource.competitorReview.confidence,
+        sampleReviewCount: competitorSource.competitorReview.sampleReviewCount,
+        recencyWindowDays: competitorSource.competitorReview.recencyWindowDays,
+        status: "resolved_with_reviews",
+      },
+      competitorReviewForPersistence: {
+        placeId: competitorSource.competitorReview.placeId,
+        sampleReviewCount: competitorSource.competitorReview.sampleReviewCount,
+        evidenceCount: competitorSource.competitorReview.evidenceCount,
+        recencyWindowDays: competitorSource.competitorReview.recencyWindowDays,
+        themes: competitorSource.competitorReview.themes,
+      },
+      competitorToolCall,
+    };
+  }
+
+  return {
+    competitorSnapshotForUi: {
+      label: params.competitor.resolvedName ?? "Competitor",
+      text: "Resolved successfully, but there is not enough recent review evidence to summarize yet.",
+      confidence: "low",
+      sampleReviewCount: 0,
+      recencyWindowDays: 90,
+      status: "resolved_no_recent_reviews",
+    },
+    competitorReviewForPersistence: null,
+    competitorToolCall,
   };
 }
 
@@ -967,6 +1086,16 @@ async function runFirstInsightUnlocked(
     recencyWindowDays: number;
     themes: Record<string, number>;
   } | null = null;
+  let competitorToolExecution: {
+    toolName: string;
+    sourceName: "reviews";
+    status: "ok" | "error" | "stale" | "timeout";
+    latencyMs: number;
+    cacheHit?: boolean;
+    sourceFreshnessSeconds?: number;
+    errorCode?: string;
+    resultJson?: Record<string, unknown>;
+  } | null = null;
   let toolExecutions: Array<{
     toolName: string;
     sourceName: string;
@@ -993,8 +1122,6 @@ async function runFirstInsightUnlocked(
       baselineAssumedForFirstLocation: !baselineByLocation.has(
         resolvedLocations[0]?.label ?? "",
       ),
-      competitor,
-      competitorName: input.competitorName,
     });
     agentOutputForTelemetry = agentOutput;
 
@@ -1003,7 +1130,7 @@ async function runFirstInsightUnlocked(
       recommendations: agentOutput.recommendations,
       snapshots: agentOutput.snapshots,
     };
-    competitorSnapshotForUi = agentOutput.competitorSnapshot;
+    competitorSnapshotForUi = undefined;
     messageText = agentOutput.message;
     sourceEntries = [
       ["weather", agentOutput.sources.weather],
@@ -1025,18 +1152,7 @@ async function runFirstInsightUnlocked(
         ],
       ),
     );
-    competitorReviewForPersistence = agentOutput.reviewSignals.competitorReview
-      ? {
-          placeId: agentOutput.reviewSignals.competitorReview.placeId,
-          sampleReviewCount:
-            agentOutput.reviewSignals.competitorReview.sampleReviewCount,
-          evidenceCount:
-            agentOutput.reviewSignals.competitorReview.evidenceCount,
-          recencyWindowDays:
-            agentOutput.reviewSignals.competitorReview.recencyWindowDays,
-          themes: agentOutput.reviewSignals.competitorReview.themes,
-        }
-      : null;
+    competitorReviewForPersistence = null;
     toolExecutions = agentOutput.toolExecutions;
 
     await safeSideEffect(
@@ -1265,11 +1381,7 @@ async function runFirstInsightUnlocked(
         },
       );
 
-      const sourceBundle = await fetchSourceBundle(
-        ctx.db,
-        resolvedLocations,
-        competitor.placeId,
-      );
+      const sourceBundle = await fetchSourceBundle(ctx.db, resolvedLocations);
 
       const recommendationInputs = resolvedLocations.map((location, idx) => ({
         locationLabel: location.label,
@@ -1281,66 +1393,11 @@ async function runFirstInsightUnlocked(
         baselineAssumed: !baselineByLocation.has(location.label) && idx === 0,
       }));
 
-      competitorSnapshotForUi = (() => {
-        if (competitor.status === "not_requested") {
-          return undefined;
-        }
-
-        if (competitor.status === "limit_reached") {
-          return {
-            label: "Competitor check",
-            text: "Already used in this session. You can run one competitor check per chat.",
-            confidence: "low",
-            sampleReviewCount: 0,
-            recencyWindowDays: 90,
-            status: "limit_reached",
-          };
-        }
-
-        if (competitor.status === "not_found") {
-          return {
-            label: input.competitorName ?? "Competitor",
-            text:
-              competitor.snapshot ??
-              "Could not resolve this competitor from places search.",
-            confidence: "low",
-            sampleReviewCount: 0,
-            recencyWindowDays: 90,
-            status: "not_found",
-          };
-        }
-
-        if (sourceBundle.competitorReview) {
-          return {
-            label: competitor.resolvedName ?? "Competitor",
-            text: sourceBundle.competitorReview.guestSnapshot,
-            confidence: sourceBundle.competitorReview.confidence,
-            sampleReviewCount: sourceBundle.competitorReview.sampleReviewCount,
-            recencyWindowDays: sourceBundle.competitorReview.recencyWindowDays,
-            status: "resolved_with_reviews",
-          };
-        }
-
-        return {
-          label: competitor.resolvedName ?? "Competitor",
-          text: "Resolved successfully, but there is not enough recent review evidence to summarize yet.",
-          confidence: "low",
-          sampleReviewCount: 0,
-          recencyWindowDays: 90,
-          status: "resolved_no_recent_reviews",
-        };
-      })();
-
-      const competitorSummaryLine = competitorSnapshotForUi
-        ? `Competitor check: ${competitorSnapshotForUi.label}. ${competitorSnapshotForUi.text}`
-        : undefined;
-
       recommendationOutput = buildRecommendations(
         input.cardType,
         recommendationInputs,
         {
           doeDays: sourceBundle.doe.days,
-          competitorSnapshot: competitorSummaryLine,
         },
       );
 
@@ -1356,7 +1413,6 @@ async function runFirstInsightUnlocked(
       messageText = buildMessage({
         summary: recommendationOutput.summary,
         recommendations: recommendationOutput.recommendations,
-        competitorSnapshot: competitorSnapshotForUi,
         followUpPrompt: fallbackFollowUpPrompt,
       });
 
@@ -1368,22 +1424,10 @@ async function runFirstInsightUnlocked(
         ["reviews", sourceBundle.reviews.status],
       ];
       reviewByLocationForPersistence = sourceBundle.reviews.byLocation;
-      competitorReviewForPersistence = sourceBundle.competitorReview
-        ? {
-            placeId: sourceBundle.competitorReview.placeId,
-            sampleReviewCount: sourceBundle.competitorReview.sampleReviewCount,
-            evidenceCount: sourceBundle.competitorReview.evidenceCount,
-            recencyWindowDays: sourceBundle.competitorReview.recencyWindowDays,
-            themes: sourceBundle.competitorReview.themes,
-          }
-        : null;
+      competitorReviewForPersistence = null;
     }
   } else {
-    const sourceBundle = await fetchSourceBundle(
-      ctx.db,
-      resolvedLocations,
-      competitor.placeId,
-    );
+    const sourceBundle = await fetchSourceBundle(ctx.db, resolvedLocations);
 
     const recommendationInputs = resolvedLocations.map((location, idx) => ({
       locationLabel: location.label,
@@ -1395,73 +1439,17 @@ async function runFirstInsightUnlocked(
       baselineAssumed: !baselineByLocation.has(location.label) && idx === 0,
     }));
 
-    competitorSnapshotForUi = (() => {
-      if (competitor.status === "not_requested") {
-        return undefined;
-      }
-
-      if (competitor.status === "limit_reached") {
-        return {
-          label: "Competitor check",
-          text: "Already used in this session. You can run one competitor check per chat.",
-          confidence: "low",
-          sampleReviewCount: 0,
-          recencyWindowDays: 90,
-          status: "limit_reached",
-        };
-      }
-
-      if (competitor.status === "not_found") {
-        return {
-          label: input.competitorName ?? "Competitor",
-          text:
-            competitor.snapshot ??
-            "Could not resolve this competitor from places search.",
-          confidence: "low",
-          sampleReviewCount: 0,
-          recencyWindowDays: 90,
-          status: "not_found",
-        };
-      }
-
-      if (sourceBundle.competitorReview) {
-        return {
-          label: competitor.resolvedName ?? "Competitor",
-          text: sourceBundle.competitorReview.guestSnapshot,
-          confidence: sourceBundle.competitorReview.confidence,
-          sampleReviewCount: sourceBundle.competitorReview.sampleReviewCount,
-          recencyWindowDays: sourceBundle.competitorReview.recencyWindowDays,
-          status: "resolved_with_reviews",
-        };
-      }
-
-      return {
-        label: competitor.resolvedName ?? "Competitor",
-        text: "Resolved successfully, but there is not enough recent review evidence to summarize yet.",
-        confidence: "low",
-        sampleReviewCount: 0,
-        recencyWindowDays: 90,
-        status: "resolved_no_recent_reviews",
-      };
-    })();
-
-    const competitorSummaryLine = competitorSnapshotForUi
-      ? `Competitor check: ${competitorSnapshotForUi.label}. ${competitorSnapshotForUi.text}`
-      : undefined;
-
     recommendationOutput = buildRecommendations(
       input.cardType,
       recommendationInputs,
       {
         doeDays: sourceBundle.doe.days,
-        competitorSnapshot: competitorSummaryLine,
       },
     );
 
     messageText = buildMessage({
       summary: recommendationOutput.summary,
       recommendations: recommendationOutput.recommendations,
-      competitorSnapshot: competitorSnapshotForUi,
     });
 
     sourceEntries = [
@@ -1472,16 +1460,17 @@ async function runFirstInsightUnlocked(
       ["reviews", sourceBundle.reviews.status],
     ];
     reviewByLocationForPersistence = sourceBundle.reviews.byLocation;
-    competitorReviewForPersistence = sourceBundle.competitorReview
-      ? {
-          placeId: sourceBundle.competitorReview.placeId,
-          sampleReviewCount: sourceBundle.competitorReview.sampleReviewCount,
-          evidenceCount: sourceBundle.competitorReview.evidenceCount,
-          recencyWindowDays: sourceBundle.competitorReview.recencyWindowDays,
-          themes: sourceBundle.competitorReview.themes,
-        }
-      : null;
+    competitorReviewForPersistence = null;
   }
+
+  const competitorAnalysis = await runSeparateCompetitorAnalysis({
+    competitor,
+    competitorName: input.competitorName,
+  });
+  competitorSnapshotForUi = competitorAnalysis.competitorSnapshotForUi;
+  competitorReviewForPersistence =
+    competitorAnalysis.competitorReviewForPersistence;
+  competitorToolExecution = competitorAnalysis.competitorToolCall;
 
   const assistantMessageId = await insertMessage(
     ctx.db,
@@ -1522,6 +1511,23 @@ async function runFirstInsightUnlocked(
             resultJson: execution.result,
           });
         }
+
+        if (competitorToolExecution) {
+          await recordToolCall(ctx, {
+            sessionId,
+            messageId: assistantMessageId,
+            turnIndex,
+            toolName: competitorToolExecution.toolName,
+            sourceName: competitorToolExecution.sourceName,
+            status: competitorToolExecution.status,
+            latencyMs: competitorToolExecution.latencyMs,
+            cacheHit: competitorToolExecution.cacheHit,
+            sourceFreshnessSeconds:
+              competitorToolExecution.sourceFreshnessSeconds,
+            errorCode: competitorToolExecution.errorCode,
+            resultJson: competitorToolExecution.resultJson,
+          });
+        }
         return;
       }
 
@@ -1540,6 +1546,23 @@ async function runFirstInsightUnlocked(
           resultJson: {
             status: status.status,
           },
+        });
+      }
+
+      if (competitorToolExecution) {
+        await recordToolCall(ctx, {
+          sessionId,
+          messageId: assistantMessageId,
+          turnIndex,
+          toolName: competitorToolExecution.toolName,
+          sourceName: competitorToolExecution.sourceName,
+          status: competitorToolExecution.status,
+          latencyMs: competitorToolExecution.latencyMs,
+          cacheHit: competitorToolExecution.cacheHit,
+          sourceFreshnessSeconds:
+            competitorToolExecution.sourceFreshnessSeconds,
+          errorCode: competitorToolExecution.errorCode,
+          resultJson: competitorToolExecution.resultJson,
         });
       }
     },

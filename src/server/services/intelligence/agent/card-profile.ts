@@ -9,7 +9,6 @@ interface CardProfile {
   prefetch: {
     doe: boolean;
     reviews: boolean;
-    competitor: boolean;
   };
   sourceWeights: Record<Recommendation["sourceName"], number>;
   reviewBackedBonus: number;
@@ -30,7 +29,6 @@ const CARD_PROFILES: Record<CardType, CardProfile> = {
     prefetch: {
       doe: false,
       reviews: true,
-      competitor: false,
     },
     sourceWeights: {
       weather: 6,
@@ -50,7 +48,6 @@ const CARD_PROFILES: Record<CardType, CardProfile> = {
     prefetch: {
       doe: true,
       reviews: false,
-      competitor: false,
     },
     sourceWeights: {
       weather: 10,
@@ -69,7 +66,6 @@ const CARD_PROFILES: Record<CardType, CardProfile> = {
     prefetch: {
       doe: false,
       reviews: false,
-      competitor: true,
     },
     sourceWeights: {
       weather: 7,
